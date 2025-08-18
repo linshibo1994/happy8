@@ -9,8 +9,11 @@ numpy>=1.21.0
 scikit-learn>=1.2.0
 scipy>=1.9.0
 
-# 深度学习 (可选)
+# 深度学习
 tensorflow>=2.10.0
+torch>=2.0.0
+torch-geometric>=2.3.0
+transformers>=4.30.0
 
 # 数据可视化
 matplotlib>=3.6.0

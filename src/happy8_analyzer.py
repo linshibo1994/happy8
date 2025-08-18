@@ -1881,6 +1881,464 @@ class LSTMPredictor:
         return predicted_numbers, confidence_scores
 
 
+class TransformerPredictor:
+    """Transformer模型预测器 - 基于注意力机制的序列预测"""
+
+    def __init__(self, analyzer):
+        self.analyzer = analyzer
+        self.model = None
+        self.scaler = StandardScaler()
+        self.vocab_size = 81  # 1-80号码 + padding token
+        self.d_model = 64
+        self.num_heads = 8
+        self.num_layers = 3
+        self.max_seq_length = 20
+
+    def predict(self, data: pd.DataFrame, count: int = 30, **kwargs) -> Tuple[List[int], List[float]]:
+        """Transformer预测"""
+        print(f"🔄 执行Transformer模型预测...")
+        print(f"分析数据: {len(data)}期")
+
+        try:
+            import torch
+            import torch.nn as nn
+            import torch.nn.functional as F
+            from torch.utils.data import DataLoader, TensorDataset
+
+            # 检查是否有足够的数据
+            if len(data) < 10:
+                print("⚠️ 数据不足，使用频率分析作为后备")
+                frequency_predictor = FrequencyPredictor(self.analyzer)
+                return frequency_predictor.predict(data, count)
+
+            # 准备训练数据
+            sequences, targets = self._prepare_sequences(data)
+
+            if len(sequences) == 0:
+                print("⚠️ 无法构建序列，使用频率分析作为后备")
+                frequency_predictor = FrequencyPredictor(self.analyzer)
+                return frequency_predictor.predict(data, count)
+
+            # 构建和训练模型
+            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+            print(f"使用设备: {device}")
+
+            model = self._build_transformer_model().to(device)
+
+            # 训练模型
+            self._train_model(model, sequences, targets, device)
+
+            # 预测
+            predicted_numbers, confidence_scores = self._predict_with_model(
+                model, sequences, device, count
+            )
+
+            print(f"✅ Transformer预测完成")
+            print(f"预测号码: {predicted_numbers[:10]}...")
+            print(f"平均置信度: {np.mean(confidence_scores):.3f}")
+
+            return predicted_numbers, confidence_scores
+
+        except ImportError:
+            print("⚠️ PyTorch未安装，使用频率分析作为后备")
+            frequency_predictor = FrequencyPredictor(self.analyzer)
+            return frequency_predictor.predict(data, count)
+        except Exception as e:
+            print(f"⚠️ Transformer预测失败: {e}")
+            frequency_predictor = FrequencyPredictor(self.analyzer)
+            return frequency_predictor.predict(data, count)
+
+    def _prepare_sequences(self, data: pd.DataFrame):
+        """准备序列数据"""
+        sequences = []
+        targets = []
+
+        # 将每期号码转换为序列
+        all_numbers = []
+        for _, row in data.iterrows():
+            numbers = [int(row[f'num{i}']) for i in range(1, 21)]
+            all_numbers.append(numbers)
+
+        # 创建滑动窗口序列
+        seq_length = 10  # 使用前10期预测下一期
+
+        for i in range(len(all_numbers) - seq_length):
+            # 输入序列：前seq_length期的号码
+            input_seq = []
+            for j in range(seq_length):
+                input_seq.extend(all_numbers[i + j])
+
+            # 目标：下一期的号码
+            target = all_numbers[i + seq_length]
+
+            sequences.append(input_seq)
+            targets.append(target)
+
+        return sequences, targets
+
+    def _build_transformer_model(self):
+        """构建Transformer模型"""
+        import torch
+        import torch.nn as nn
+
+        class TransformerModel(nn.Module):
+            def __init__(self, vocab_size, d_model, num_heads, num_layers, max_seq_length):
+                super(TransformerModel, self).__init__()
+                self.d_model = d_model
+                self.embedding = nn.Embedding(vocab_size, d_model)
+                self.pos_encoding = self._create_positional_encoding(max_seq_length, d_model)
+
+                encoder_layer = nn.TransformerEncoderLayer(
+                    d_model=d_model,
+                    nhead=num_heads,
+                    dim_feedforward=256,
+                    dropout=0.1,
+                    batch_first=True
+                )
+                self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+
+                self.output_projection = nn.Linear(d_model, 80)  # 输出80个号码的概率
+                self.dropout = nn.Dropout(0.1)
+
+            def _create_positional_encoding(self, max_len, d_model):
+                import torch
+                import math
+
+                pe = torch.zeros(max_len, d_model)
+                position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+                div_term = torch.exp(torch.arange(0, d_model, 2).float() *
+                                   (-math.log(10000.0) / d_model))
+
+                pe[:, 0::2] = torch.sin(position * div_term)
+                pe[:, 1::2] = torch.cos(position * div_term)
+                return pe.unsqueeze(0)
+
+            def forward(self, x):
+                import math
+                # x shape: (batch_size, seq_len)
+                seq_len = x.size(1)
+
+                # 嵌入和位置编码
+                x = self.embedding(x) * math.sqrt(self.d_model)
+                x = x + self.pos_encoding[:, :seq_len, :].to(x.device)
+                x = self.dropout(x)
+
+                # Transformer编码
+                x = self.transformer(x)
+
+                # 全局平均池化
+                x = torch.mean(x, dim=1)
+
+                # 输出投影
+                x = self.output_projection(x)
+                return torch.sigmoid(x)
+
+        return TransformerModel(
+            self.vocab_size, self.d_model, self.num_heads,
+            self.num_layers, self.max_seq_length * 20
+        )
+
+    def _train_model(self, model, sequences, targets, device):
+        """训练Transformer模型"""
+        import torch
+        import torch.nn as nn
+        from torch.utils.data import DataLoader, TensorDataset
+
+        print("开始训练Transformer模型...")
+
+        # 准备数据
+        X = torch.tensor(sequences, dtype=torch.long).to(device)
+
+        # 将目标转换为多标签格式
+        y = torch.zeros(len(targets), 80).to(device)
+        for i, target_numbers in enumerate(targets):
+            for num in target_numbers:
+                if 1 <= num <= 80:
+                    y[i, num - 1] = 1.0
+
+        # 创建数据加载器
+        dataset = TensorDataset(X, y)
+        dataloader = DataLoader(dataset, batch_size=16, shuffle=True)
+
+        # 优化器和损失函数
+        optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+        criterion = nn.BCELoss()
+
+        # 训练循环
+        model.train()
+        num_epochs = 50
+
+        for epoch in range(num_epochs):
+            total_loss = 0
+            for batch_x, batch_y in dataloader:
+                optimizer.zero_grad()
+
+                outputs = model(batch_x)
+                loss = criterion(outputs, batch_y)
+
+                loss.backward()
+                optimizer.step()
+
+                total_loss += loss.item()
+
+            if (epoch + 1) % 10 == 0:
+                avg_loss = total_loss / len(dataloader)
+                print(f"Epoch {epoch + 1}/{num_epochs}, Loss: {avg_loss:.4f}")
+
+        print("Transformer模型训练完成")
+
+    def _predict_with_model(self, model, sequences, device, count):
+        """使用训练好的模型进行预测"""
+        import torch
+
+        model.eval()
+
+        # 使用最后一个序列进行预测
+        if len(sequences) > 0:
+            last_seq = torch.tensor([sequences[-1]], dtype=torch.long).to(device)
+        else:
+            # 创建随机序列作为后备
+            last_seq = torch.randint(1, 81, (1, 200)).to(device)
+
+        with torch.no_grad():
+            probabilities = model(last_seq)[0].cpu().numpy()
+
+        # 选择概率最高的号码
+        number_probs = [(i + 1, prob) for i, prob in enumerate(probabilities)]
+        number_probs.sort(key=lambda x: x[1], reverse=True)
+
+        predicted_numbers = [num for num, _ in number_probs[:count]]
+        confidence_scores = [float(prob) for _, prob in number_probs[:count]]
+
+        return predicted_numbers, confidence_scores
+
+
+class GraphNeuralNetworkPredictor:
+    """图神经网络预测器 - 基于号码关系图的预测"""
+
+    def __init__(self, analyzer):
+        self.analyzer = analyzer
+        self.model = None
+
+    def predict(self, data: pd.DataFrame, count: int = 30, **kwargs) -> Tuple[List[int], List[float]]:
+        """图神经网络预测"""
+        print(f"🔄 执行图神经网络预测...")
+        print(f"分析数据: {len(data)}期")
+
+        try:
+            import torch
+            import torch.nn as nn
+            import torch.nn.functional as F
+
+            # 检查数据量
+            if len(data) < 20:
+                print("⚠️ 数据不足，使用频率分析作为后备")
+                frequency_predictor = FrequencyPredictor(self.analyzer)
+                return frequency_predictor.predict(data, count)
+
+            # 构建号码关系图
+            adjacency_matrix, node_features = self._build_number_graph(data)
+
+            # 构建和训练GNN模型
+            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+            print(f"使用设备: {device}")
+
+            model = self._build_gnn_model().to(device)
+
+            # 训练模型
+            self._train_gnn_model(model, adjacency_matrix, node_features, data, device)
+
+            # 预测
+            predicted_numbers, confidence_scores = self._predict_with_gnn(
+                model, adjacency_matrix, node_features, device, count
+            )
+
+            print(f"✅ 图神经网络预测完成")
+            print(f"预测号码: {predicted_numbers[:10]}...")
+            print(f"平均置信度: {np.mean(confidence_scores):.3f}")
+
+            return predicted_numbers, confidence_scores
+
+        except ImportError:
+            print("⚠️ PyTorch未安装，使用频率分析作为后备")
+            frequency_predictor = FrequencyPredictor(self.analyzer)
+            return frequency_predictor.predict(data, count)
+        except Exception as e:
+            print(f"⚠️ 图神经网络预测失败: {e}")
+            frequency_predictor = FrequencyPredictor(self.analyzer)
+            return frequency_predictor.predict(data, count)
+
+    def _build_number_graph(self, data: pd.DataFrame):
+        """构建号码关系图"""
+        print("构建号码关系图...")
+
+        # 初始化邻接矩阵 (80x80)
+        adjacency_matrix = np.zeros((80, 80))
+
+        # 统计号码共现频率
+        for _, row in data.iterrows():
+            numbers = [int(row[f'num{i}']) for i in range(1, 21)]
+
+            # 计算号码间的共现关系
+            for i in range(len(numbers)):
+                for j in range(i + 1, len(numbers)):
+                    num1, num2 = numbers[i] - 1, numbers[j] - 1  # 转换为0-79索引
+                    adjacency_matrix[num1][num2] += 1
+                    adjacency_matrix[num2][num1] += 1  # 无向图
+
+        # 归一化邻接矩阵
+        max_weight = np.max(adjacency_matrix)
+        if max_weight > 0:
+            adjacency_matrix = adjacency_matrix / max_weight
+
+        # 构建节点特征 (每个号码的统计特征)
+        node_features = self._build_node_features(data)
+
+        print(f"图构建完成: 80个节点, {np.sum(adjacency_matrix > 0)//2}条边")
+
+        return adjacency_matrix, node_features
+
+    def _build_node_features(self, data: pd.DataFrame):
+        """构建节点特征"""
+        node_features = np.zeros((80, 5))  # 5维特征
+
+        # 统计每个号码的特征
+        for num in range(1, 81):
+            # 特征1: 出现频率
+            frequency = 0
+            # 特征2: 最近出现位置的平均值
+            recent_positions = []
+            # 特征3: 与其他号码的平均共现度
+            cooccurrence = 0
+            # 特征4: 奇偶性 (0=偶数, 1=奇数)
+            parity = num % 2
+            # 特征5: 大小 (归一化到0-1)
+            size = (num - 1) / 79
+
+            for idx, row in data.iterrows():
+                numbers = [int(row[f'num{i}']) for i in range(1, 21)]
+                if num in numbers:
+                    frequency += 1
+                    recent_positions.append(numbers.index(num))
+                    # 计算与其他号码的共现
+                    cooccurrence += len([n for n in numbers if n != num])
+
+            # 归一化特征
+            frequency = frequency / len(data) if len(data) > 0 else 0
+            avg_position = np.mean(recent_positions) / 19 if recent_positions else 0.5
+            cooccurrence = cooccurrence / (len(data) * 19) if len(data) > 0 else 0
+
+            node_features[num - 1] = [frequency, avg_position, cooccurrence, parity, size]
+
+        return node_features
+
+    def _build_gnn_model(self):
+        """构建图神经网络模型"""
+        import torch
+        import torch.nn as nn
+        import torch.nn.functional as F
+
+        class GraphConvLayer(nn.Module):
+            def __init__(self, in_features, out_features):
+                super(GraphConvLayer, self).__init__()
+                self.linear = nn.Linear(in_features, out_features)
+
+            def forward(self, x, adj):
+                # x: (num_nodes, in_features)
+                # adj: (num_nodes, num_nodes)
+                support = self.linear(x)
+                output = torch.mm(adj, support)
+                return F.relu(output)
+
+        class GNNModel(nn.Module):
+            def __init__(self, input_dim, hidden_dim, output_dim):
+                super(GNNModel, self).__init__()
+                self.gc1 = GraphConvLayer(input_dim, hidden_dim)
+                self.gc2 = GraphConvLayer(hidden_dim, hidden_dim)
+                self.gc3 = GraphConvLayer(hidden_dim, output_dim)
+                self.dropout = nn.Dropout(0.2)
+
+            def forward(self, x, adj):
+                x = self.gc1(x, adj)
+                x = self.dropout(x)
+                x = self.gc2(x, adj)
+                x = self.dropout(x)
+                x = self.gc3(x, adj)
+                return torch.sigmoid(x)
+
+        return GNNModel(input_dim=5, hidden_dim=32, output_dim=1)
+
+    def _train_gnn_model(self, model, adjacency_matrix, node_features, data, device):
+        """训练GNN模型"""
+        import torch
+        import torch.nn as nn
+
+        print("开始训练图神经网络模型...")
+
+        # 转换为张量
+        adj_tensor = torch.FloatTensor(adjacency_matrix).to(device)
+        features_tensor = torch.FloatTensor(node_features).to(device)
+
+        # 构建训练目标 (每期出现的号码为正样本)
+        targets = torch.zeros(80, len(data)).to(device)
+        for idx, (_, row) in enumerate(data.iterrows()):
+            numbers = [int(row[f'num{i}']) for i in range(1, 21)]
+            for num in numbers:
+                targets[num - 1, idx] = 1.0
+
+        # 优化器和损失函数
+        optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+        criterion = nn.BCELoss()
+
+        # 训练循环
+        model.train()
+        num_epochs = 100
+
+        for epoch in range(num_epochs):
+            optimizer.zero_grad()
+
+            # 前向传播
+            outputs = model(features_tensor, adj_tensor).squeeze()  # (80,)
+
+            # 计算平均损失 (对所有期的平均)
+            total_loss = 0
+            for period_idx in range(targets.shape[1]):
+                period_targets = targets[:, period_idx]
+                loss = criterion(outputs, period_targets)
+                total_loss += loss
+
+            avg_loss = total_loss / targets.shape[1]
+            avg_loss.backward()
+            optimizer.step()
+
+            if (epoch + 1) % 20 == 0:
+                print(f"Epoch {epoch + 1}/{num_epochs}, Loss: {avg_loss.item():.4f}")
+
+        print("图神经网络模型训练完成")
+
+    def _predict_with_gnn(self, model, adjacency_matrix, node_features, device, count):
+        """使用GNN模型进行预测"""
+        import torch
+
+        model.eval()
+
+        # 转换为张量
+        adj_tensor = torch.FloatTensor(adjacency_matrix).to(device)
+        features_tensor = torch.FloatTensor(node_features).to(device)
+
+        with torch.no_grad():
+            probabilities = model(features_tensor, adj_tensor).squeeze().cpu().numpy()
+
+        # 选择概率最高的号码
+        number_probs = [(i + 1, prob) for i, prob in enumerate(probabilities)]
+        number_probs.sort(key=lambda x: x[1], reverse=True)
+
+        predicted_numbers = [num for num, _ in number_probs[:count]]
+        confidence_scores = [float(prob) for _, prob in number_probs[:count]]
+
+        return predicted_numbers, confidence_scores
+
+
 class EnsemblePredictor:
     """集成学习预测器"""
     
@@ -1941,6 +2399,8 @@ class PredictionEngine:
             'markov_2nd': Markov2ndPredictor(analyzer),
             'markov_3rd': Markov3rdPredictor(analyzer),
             'adaptive_markov': AdaptiveMarkovPredictor(analyzer),
+            'transformer': TransformerPredictor(analyzer),
+            'gnn': GraphNeuralNetworkPredictor(analyzer),
             'lstm': LSTMPredictor(analyzer),
             'ensemble': EnsemblePredictor(analyzer)
         }

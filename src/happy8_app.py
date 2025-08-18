@@ -204,7 +204,7 @@ def show_homepage():
         method = st.selectbox(
             "预测方法",
             ["frequency", "hot_cold", "missing", "markov", "markov_2nd", "markov_3rd",
-             "adaptive_markov", "lstm", "ensemble"],
+             "adaptive_markov", "transformer", "gnn", "lstm", "ensemble"],
             format_func=lambda x: {
                 "frequency": "频率分析",
                 "hot_cold": "冷热号分析",
@@ -213,10 +213,12 @@ def show_homepage():
                 "markov_2nd": "2阶马尔可夫链",
                 "markov_3rd": "3阶马尔可夫链",
                 "adaptive_markov": "自适应马尔可夫链",
+                "transformer": "Transformer模型",
+                "gnn": "图神经网络",
                 "lstm": "LSTM神经网络",
                 "ensemble": "集成学习"
             }[x],
-            index=8
+            index=10
         )
     
     with col3:
@@ -395,7 +397,7 @@ def show_prediction_interface():
         method = st.selectbox(
             "预测方法",
             ["frequency", "hot_cold", "missing", "markov", "markov_2nd", "markov_3rd",
-             "adaptive_markov", "lstm", "ensemble"],
+             "adaptive_markov", "transformer", "gnn", "lstm", "ensemble"],
             format_func=lambda x: {
                 "frequency": "频率分析",
                 "hot_cold": "冷热号分析",
@@ -404,10 +406,12 @@ def show_prediction_interface():
                 "markov_2nd": "2阶马尔可夫链",
                 "markov_3rd": "3阶马尔可夫链",
                 "adaptive_markov": "自适应马尔可夫链",
+                "transformer": "Transformer模型",
+                "gnn": "图神经网络",
                 "lstm": "LSTM神经网络",
                 "ensemble": "集成学习"
             }[x],
-            index=8
+            index=10
         )
     
     # 高级选项
