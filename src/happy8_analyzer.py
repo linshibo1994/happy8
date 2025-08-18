@@ -1297,9 +1297,422 @@ class MarkovPredictor:
         return zone_idx % 256
 
 
+class Markov2ndPredictor:
+    """2阶马尔可夫链预测器"""
+
+    def __init__(self, analyzer):
+        self.analyzer = analyzer
+
+    def predict(self, data: pd.DataFrame, count: int = 30, **kwargs) -> Tuple[List[int], List[float]]:
+        """2阶马尔可夫链预测 - 基于前两期状态预测"""
+        print(f"🔄 执行2阶马尔可夫链预测...")
+        print(f"分析数据: {len(data)}期")
+
+        # 构建2阶状态转移统计 (state1, state2) -> next_state
+        transition_counts = {}
+        state_counts = {}
+
+        # 构建转移统计
+        for _, row in data.iterrows():
+            numbers = [int(row[f'num{i}']) for i in range(1, 21)]
+
+            # 对于每个位置的号码序列，构建2阶转移
+            for i in range(len(numbers) - 2):
+                state1 = numbers[i]
+                state2 = numbers[i + 1]
+                next_state = numbers[i + 2]
+
+                state_pair = (state1, state2)
+
+                if state_pair not in transition_counts:
+                    transition_counts[state_pair] = {}
+                    state_counts[state_pair] = 0
+
+                if next_state not in transition_counts[state_pair]:
+                    transition_counts[state_pair][next_state] = 0
+
+                transition_counts[state_pair][next_state] += 1
+                state_counts[state_pair] += 1
+
+        print(f"构建了 {len(transition_counts)} 个2阶状态转移")
+
+        # 拉普拉斯平滑处理稀疏性
+        alpha = 0.1
+
+        def get_transition_probability(state1, state2, next_state):
+            """获取转移概率，应用拉普拉斯平滑"""
+            state_pair = (state1, state2)
+
+            if state_pair in transition_counts:
+                count = transition_counts[state_pair].get(next_state, 0)
+                total = state_counts[state_pair]
+                return (count + alpha) / (total + alpha * 80)
+            else:
+                return 1.0 / 80
+
+        # 获取最近两期的号码作为初始状态
+        if len(data) >= 2:
+            recent_numbers_1 = [int(data.iloc[0][f'num{i}']) for i in range(1, 21)]
+            recent_numbers_2 = [int(data.iloc[1][f'num{i}']) for i in range(1, 21)]
+            state1 = recent_numbers_1[-1]
+            state2 = recent_numbers_2[-1]
+        else:
+            state1 = np.random.randint(1, 81)
+            state2 = np.random.randint(1, 81)
+
+        print(f"初始状态: ({state1}, {state2})")
+
+        # 计算所有号码的预测概率
+        number_probs = {}
+        for next_state in range(1, 81):
+            prob = get_transition_probability(state1, state2, next_state)
+            number_probs[next_state] = prob
+
+        # 按概率排序
+        sorted_probs = sorted(number_probs.items(), key=lambda x: x[1], reverse=True)
+
+        predicted_numbers = [num for num, prob in sorted_probs[:count]]
+        confidence_scores = [prob for num, prob in sorted_probs[:count]]
+
+        print(f"✅ 2阶马尔可夫链预测完成")
+        print(f"预测号码: {predicted_numbers[:10]}...")
+        print(f"平均置信度: {np.mean(confidence_scores):.3f}")
+
+        return predicted_numbers, confidence_scores
+
+
+class Markov3rdPredictor:
+    """3阶马尔可夫链预测器 - 基于特征状态转移"""
+
+    def __init__(self, analyzer):
+        self.analyzer = analyzer
+
+    def predict(self, data: pd.DataFrame, count: int = 30, **kwargs) -> Tuple[List[int], List[float]]:
+        """3阶马尔可夫链预测 - 基于特征转移而非具体号码转移"""
+        print(f"🔄 执行3阶马尔可夫链预测（特征化状态空间）...")
+        print(f"分析数据: {len(data)}期")
+
+        # 提取每期的特征
+        features_history = []
+        for _, row in data.iterrows():
+            numbers = [int(row[f'num{i}']) for i in range(1, 21)]
+            features = self._extract_features(numbers)
+            features_history.append(features)
+
+        # 构建3阶特征状态转移
+        transition_counts = {}
+        state_counts = {}
+
+        for i in range(3, len(features_history)):
+            # 前三期的特征作为状态
+            state1 = tuple(features_history[i-3])
+            state2 = tuple(features_history[i-2])
+            state3 = tuple(features_history[i-1])
+            next_features = tuple(features_history[i])
+
+            state_triple = (state1, state2, state3)
+
+            if state_triple not in transition_counts:
+                transition_counts[state_triple] = {}
+                state_counts[state_triple] = 0
+
+            if next_features not in transition_counts[state_triple]:
+                transition_counts[state_triple][next_features] = 0
+
+            transition_counts[state_triple][next_features] += 1
+            state_counts[state_triple] += 1
+
+        print(f"构建了 {len(transition_counts)} 个3阶特征状态转移")
+
+        # 获取最近三期的特征作为当前状态
+        if len(features_history) >= 3:
+            current_state = (
+                tuple(features_history[-3]),
+                tuple(features_history[-2]),
+                tuple(features_history[-1])
+            )
+        else:
+            # 数据不足，使用默认特征
+            default_features = self._extract_features(list(range(1, 21)))
+            current_state = (tuple(default_features),) * 3
+
+        # 预测下一期特征
+        predicted_features = self._predict_next_features(
+            transition_counts, state_counts, current_state
+        )
+
+        # 根据预测特征生成号码
+        predicted_numbers, confidence_scores = self._features_to_numbers(
+            predicted_features, data, count
+        )
+
+        print(f"✅ 3阶马尔可夫链预测完成")
+        print(f"预测特征: 和值={predicted_features[0]:.1f}, 奇偶比={predicted_features[1]:.2f}")
+        print(f"预测号码: {predicted_numbers[:10]}...")
+        print(f"平均置信度: {np.mean(confidence_scores):.3f}")
+
+        return predicted_numbers, confidence_scores
+
+    def _extract_features(self, numbers: List[int]) -> List[float]:
+        """提取号码特征"""
+        # 和值特征
+        sum_value = sum(numbers) / 20  # 归一化
+
+        # 奇偶比特征
+        odd_count = sum(1 for num in numbers if num % 2 == 1)
+        odd_ratio = odd_count / 20
+
+        # 大小比特征 (>40为大号)
+        big_count = sum(1 for num in numbers if num > 40)
+        big_ratio = big_count / 20
+
+        # 区域分布特征 (8个区域)
+        zone_counts = [0] * 8
+        for num in numbers:
+            zone_idx = (num - 1) // 10
+            zone_counts[zone_idx] += 1
+        zone_ratios = [count / 20 for count in zone_counts]
+
+        return [sum_value, odd_ratio, big_ratio] + zone_ratios
+
+    def _predict_next_features(self, transition_counts, state_counts, current_state):
+        """预测下一期特征"""
+        alpha = 0.01  # 拉普拉斯平滑参数
+
+        if current_state in transition_counts:
+            # 找到最可能的下一特征状态
+            feature_probs = {}
+            total_count = state_counts[current_state]
+
+            for next_features, count in transition_counts[current_state].items():
+                prob = (count + alpha) / (total_count + alpha * len(transition_counts[current_state]))
+                feature_probs[next_features] = prob
+
+            # 选择概率最高的特征
+            best_features = max(feature_probs.items(), key=lambda x: x[1])[0]
+            return list(best_features)
+        else:
+            # 如果没有匹配的状态，使用历史平均特征
+            return self._get_average_features(transition_counts)
+
+    def _get_average_features(self, transition_counts):
+        """获取历史平均特征"""
+        all_features = []
+        for state_triple in transition_counts:
+            for next_features in transition_counts[state_triple]:
+                all_features.append(list(next_features))
+
+        if all_features:
+            avg_features = np.mean(all_features, axis=0)
+            return avg_features.tolist()
+        else:
+            # 默认特征
+            return [10.5, 0.5, 0.5] + [0.125] * 8
+
+    def _features_to_numbers(self, predicted_features, data, count):
+        """根据预测特征生成号码"""
+        target_sum = predicted_features[0] * 20
+        target_odd_ratio = predicted_features[1]
+        target_big_ratio = predicted_features[2]
+        target_zone_ratios = predicted_features[3:11]
+
+        # 使用遗传算法或启发式方法生成符合特征的号码组合
+        best_combination = self._generate_combination_by_features(
+            target_sum, target_odd_ratio, target_big_ratio, target_zone_ratios, count
+        )
+
+        # 计算置信度（基于特征匹配度）
+        confidence_scores = self._calculate_feature_confidence(
+            best_combination, predicted_features
+        )
+
+        return best_combination, confidence_scores
+
+    def _generate_combination_by_features(self, target_sum, target_odd_ratio,
+                                        target_big_ratio, target_zone_ratios, count):
+        """基于目标特征生成号码组合"""
+        best_combination = []
+        best_score = float('-inf')
+
+        # 多次随机尝试，选择最符合特征的组合
+        for _ in range(1000):
+            combination = np.random.choice(range(1, 81), size=count, replace=False).tolist()
+            score = self._evaluate_combination(
+                combination, target_sum, target_odd_ratio, target_big_ratio, target_zone_ratios
+            )
+
+            if score > best_score:
+                best_score = score
+                best_combination = combination.copy()
+
+        return sorted(best_combination)
+
+    def _evaluate_combination(self, combination, target_sum, target_odd_ratio,
+                            target_big_ratio, target_zone_ratios):
+        """评估号码组合与目标特征的匹配度"""
+        # 和值匹配度
+        actual_sum = sum(combination)
+        sum_score = 1.0 / (1.0 + abs(actual_sum - target_sum))
+
+        # 奇偶比匹配度
+        actual_odd_ratio = sum(1 for num in combination if num % 2 == 1) / len(combination)
+        odd_score = 1.0 / (1.0 + abs(actual_odd_ratio - target_odd_ratio))
+
+        # 大小比匹配度
+        actual_big_ratio = sum(1 for num in combination if num > 40) / len(combination)
+        big_score = 1.0 / (1.0 + abs(actual_big_ratio - target_big_ratio))
+
+        # 区域分布匹配度
+        actual_zone_counts = [0] * 8
+        for num in combination:
+            zone_idx = (num - 1) // 10
+            actual_zone_counts[zone_idx] += 1
+        actual_zone_ratios = [count / len(combination) for count in actual_zone_counts]
+
+        zone_score = 0
+        for i in range(8):
+            zone_score += 1.0 / (1.0 + abs(actual_zone_ratios[i] - target_zone_ratios[i]))
+        zone_score /= 8
+
+        # 综合评分
+        return (sum_score + odd_score + big_score + zone_score) / 4
+
+    def _calculate_feature_confidence(self, combination, predicted_features):
+        """计算基于特征的置信度"""
+        confidence = self._evaluate_combination(
+            combination,
+            predicted_features[0] * 20,
+            predicted_features[1],
+            predicted_features[2],
+            predicted_features[3:11]
+        )
+
+        # 为每个号码分配相同的置信度
+        return [confidence] * len(combination)
+
+
+class AdaptiveMarkovPredictor:
+    """自适应马尔可夫链预测器 - 1-5阶智能融合"""
+
+    def __init__(self, analyzer):
+        self.analyzer = analyzer
+        self.base_predictors = {
+            1: MarkovPredictor(analyzer),
+            2: Markov2ndPredictor(analyzer),
+            3: Markov3rdPredictor(analyzer)
+        }
+
+    def predict(self, data: pd.DataFrame, count: int = 30, **kwargs) -> Tuple[List[int], List[float]]:
+        """自适应马尔可夫链预测 - 多阶融合"""
+        print(f"🔄 执行自适应马尔可夫链预测...")
+        print(f"分析数据: {len(data)}期")
+
+        # 动态权重分配
+        weights = self._calculate_adaptive_weights(data)
+        print(f"动态权重: {weights}")
+
+        # 收集各阶预测结果
+        all_predictions = {}
+        all_confidences = {}
+
+        for order, weight in weights.items():
+            if weight > 0:
+                try:
+                    if order in self.base_predictors:
+                        numbers, confidences = self.base_predictors[order].predict(data, count * 2)
+                        all_predictions[order] = numbers
+                        all_confidences[order] = confidences
+                        print(f"{order}阶预测完成: {len(numbers)}个号码")
+                except Exception as e:
+                    print(f"⚠️ {order}阶预测失败: {e}")
+                    weights[order] = 0
+
+        # 重新归一化权重
+        total_weight = sum(weights.values())
+        if total_weight > 0:
+            weights = {k: v/total_weight for k, v in weights.items()}
+
+        # 融合预测结果
+        final_numbers, final_confidences = self._fuse_predictions(
+            all_predictions, all_confidences, weights, count
+        )
+
+        print(f"✅ 自适应马尔可夫链预测完成")
+        print(f"融合了 {len([w for w in weights.values() if w > 0])} 个预测器")
+        print(f"预测号码: {final_numbers[:10]}...")
+        print(f"平均置信度: {np.mean(final_confidences):.3f}")
+
+        return final_numbers, final_confidences
+
+    def _calculate_adaptive_weights(self, data):
+        """计算自适应权重"""
+        # 基础权重分配
+        base_weights = {
+            1: 0.25,  # 1阶权重
+            2: 0.50,  # 2阶权重
+            3: 0.25   # 3阶权重
+        }
+
+        # 基于数据量调整权重
+        data_size = len(data)
+        data_factor = min(1.0, data_size / 100)  # 100期以上数据才能充分发挥高阶优势
+
+        # 调整权重
+        adjusted_weights = {}
+        for order, base_weight in base_weights.items():
+            if order == 1:
+                # 1阶马尔可夫链在数据少时权重更高
+                adjusted_weights[order] = base_weight * (2.0 - data_factor)
+            elif order == 2:
+                # 2阶在中等数据量时权重最高
+                adjusted_weights[order] = base_weight * (1.0 + data_factor * 0.5)
+            else:
+                # 高阶在数据充足时权重更高
+                adjusted_weights[order] = base_weight * data_factor
+
+        # 归一化权重
+        total_weight = sum(adjusted_weights.values())
+        if total_weight > 0:
+            adjusted_weights = {k: v/total_weight for k, v in adjusted_weights.items()}
+
+        return adjusted_weights
+
+    def _fuse_predictions(self, all_predictions, all_confidences, weights, count):
+        """融合多个预测结果"""
+        # 收集所有候选号码及其加权置信度
+        number_scores = {}
+
+        for order, numbers in all_predictions.items():
+            weight = weights.get(order, 0)
+            confidences = all_confidences.get(order, [])
+
+            for i, number in enumerate(numbers):
+                confidence = confidences[i] if i < len(confidences) else 0.1
+                weighted_score = confidence * weight
+
+                if number not in number_scores:
+                    number_scores[number] = 0
+                number_scores[number] += weighted_score
+
+        # 按加权得分排序
+        sorted_numbers = sorted(number_scores.items(), key=lambda x: x[1], reverse=True)
+
+        # 选择前count个号码
+        final_numbers = [num for num, score in sorted_numbers[:count]]
+        final_confidences = [score for num, score in sorted_numbers[:count]]
+
+        # 归一化置信度
+        if final_confidences:
+            max_conf = max(final_confidences)
+            if max_conf > 0:
+                final_confidences = [conf / max_conf for conf in final_confidences]
+
+        return final_numbers, final_confidences
+
+
 class LSTMPredictor:
     """LSTM神经网络预测器"""
-    
+
     def __init__(self, analyzer):
         self.analyzer = analyzer
         self.model = None
@@ -1525,6 +1938,9 @@ class PredictionEngine:
             'hot_cold': HotColdPredictor(analyzer),
             'missing': MissingPredictor(analyzer),
             'markov': MarkovPredictor(analyzer),
+            'markov_2nd': Markov2ndPredictor(analyzer),
+            'markov_3rd': Markov3rdPredictor(analyzer),
+            'adaptive_markov': AdaptiveMarkovPredictor(analyzer),
             'lstm': LSTMPredictor(analyzer),
             'ensemble': EnsemblePredictor(analyzer)
         }

@@ -203,16 +203,20 @@ def show_homepage():
     with col2:
         method = st.selectbox(
             "预测方法",
-            ["frequency", "hot_cold", "missing", "markov", "lstm", "ensemble"],
+            ["frequency", "hot_cold", "missing", "markov", "markov_2nd", "markov_3rd",
+             "adaptive_markov", "lstm", "ensemble"],
             format_func=lambda x: {
                 "frequency": "频率分析",
                 "hot_cold": "冷热号分析",
                 "missing": "遗漏分析",
-                "markov": "马尔可夫链",
+                "markov": "1阶马尔可夫链",
+                "markov_2nd": "2阶马尔可夫链",
+                "markov_3rd": "3阶马尔可夫链",
+                "adaptive_markov": "自适应马尔可夫链",
                 "lstm": "LSTM神经网络",
                 "ensemble": "集成学习"
             }[x],
-            index=5
+            index=8
         )
     
     with col3:
@@ -390,16 +394,20 @@ def show_prediction_interface():
         
         method = st.selectbox(
             "预测方法",
-            ["frequency", "hot_cold", "missing", "markov", "lstm", "ensemble"],
+            ["frequency", "hot_cold", "missing", "markov", "markov_2nd", "markov_3rd",
+             "adaptive_markov", "lstm", "ensemble"],
             format_func=lambda x: {
                 "frequency": "频率分析",
                 "hot_cold": "冷热号分析",
                 "missing": "遗漏分析",
-                "markov": "马尔可夫链",
+                "markov": "1阶马尔可夫链",
+                "markov_2nd": "2阶马尔可夫链",
+                "markov_3rd": "3阶马尔可夫链",
+                "adaptive_markov": "自适应马尔可夫链",
                 "lstm": "LSTM神经网络",
                 "ensemble": "集成学习"
             }[x],
-            index=5
+            index=8
         )
     
     # 高级选项
