@@ -1,0 +1,23 @@
+{
+  "app": {
+    "name": "快乐8智能预测系统",
+    "version": "1.0.0",
+    "port": 8501,
+    "host": "0.0.0.0"
+  },
+  "data": {
+    "auto_update": true,
+    "update_interval": 300,
+    "backup_enabled": true,
+    "max_periods": 1000
+  },
+  "performance": {
+    "cache_enabled": true,
+    "parallel_processing": true,
+    "gpu_enabled": false
+  },
+  "security": {
+    "rate_limit": 100,
+    "auth_required": false
+  }
+}
