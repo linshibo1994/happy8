@@ -204,7 +204,9 @@ def show_homepage():
         method = st.selectbox(
             "预测方法",
             ["frequency", "hot_cold", "missing", "markov", "markov_2nd", "markov_3rd",
-             "adaptive_markov", "transformer", "gnn", "lstm", "ensemble"],
+             "adaptive_markov", "transformer", "gnn", "monte_carlo", "clustering",
+             "advanced_ensemble", "bayesian", "super_predictor", "high_confidence",
+             "lstm", "ensemble"],
             format_func=lambda x: {
                 "frequency": "频率分析",
                 "hot_cold": "冷热号分析",
@@ -215,10 +217,16 @@ def show_homepage():
                 "adaptive_markov": "自适应马尔可夫链",
                 "transformer": "Transformer模型",
                 "gnn": "图神经网络",
+                "monte_carlo": "蒙特卡洛模拟",
+                "clustering": "聚类分析",
+                "advanced_ensemble": "自适应集成学习",
+                "bayesian": "贝叶斯推理",
+                "super_predictor": "超级预测器",
+                "high_confidence": "高置信度预测",
                 "lstm": "LSTM神经网络",
                 "ensemble": "集成学习"
             }[x],
-            index=10
+            index=16
         )
     
     with col3:
@@ -397,7 +405,9 @@ def show_prediction_interface():
         method = st.selectbox(
             "预测方法",
             ["frequency", "hot_cold", "missing", "markov", "markov_2nd", "markov_3rd",
-             "adaptive_markov", "transformer", "gnn", "lstm", "ensemble"],
+             "adaptive_markov", "transformer", "gnn", "monte_carlo", "clustering",
+             "advanced_ensemble", "bayesian", "super_predictor", "high_confidence",
+             "lstm", "ensemble"],
             format_func=lambda x: {
                 "frequency": "频率分析",
                 "hot_cold": "冷热号分析",
@@ -408,10 +418,16 @@ def show_prediction_interface():
                 "adaptive_markov": "自适应马尔可夫链",
                 "transformer": "Transformer模型",
                 "gnn": "图神经网络",
+                "monte_carlo": "蒙特卡洛模拟",
+                "clustering": "聚类分析",
+                "advanced_ensemble": "自适应集成学习",
+                "bayesian": "贝叶斯推理",
+                "super_predictor": "超级预测器",
+                "high_confidence": "高置信度预测",
                 "lstm": "LSTM神经网络",
                 "ensemble": "集成学习"
             }[x],
-            index=10
+            index=16
         )
     
     # 高级选项
