@@ -1,7 +1,19 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-系统测试套件 - 完整的功能和性能测试
+快乐8智能预测系统 - 系统测试套件
+Happy8 Prediction System - System Test Suite
+
+完整的功能和性能测试，确保系统质量：
+- 基础功能测试
+- 算法性能测试
+- 系统集成测试
+- 压力测试和用户场景测试
+
+作者: linshibo
+开发者: linshibo
+版本: v1.4.0
+创建时间: 2025-08-19
 """
 
 import sys

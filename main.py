@@ -4,11 +4,17 @@
 快乐8智能预测系统 - 主启动文件
 Happy8 Prediction System - Main Entry Point
 
-统一的系统入口，支持多种启动方式
+统一的系统入口，支持多种启动方式：
+- Web界面模式: python main.py web
+- 命令行预测: python main.py predict
+- 批量测试: python main.py batch-test
+- 性能测试: python main.py performance-test
 
-作者: CodeBuddy
-版本: v1.0
+作者: linshibo
+开发者: linshibo
+版本: v1.4.0
 创建时间: 2025-08-18
+最后更新: 2025-08-19
 """
 
 import os

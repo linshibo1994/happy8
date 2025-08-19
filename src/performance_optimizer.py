@@ -1,7 +1,19 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-性能优化模块 - GPU加速和并行处理优化
+快乐8智能预测系统 - 性能优化模块
+Happy8 Prediction System - Performance Optimizer
+
+GPU加速和并行处理优化，提升系统性能：
+- CPU性能测试和优化
+- 内存性能监控
+- 并行处理优化
+- GPU加速支持
+
+作者: linshibo
+开发者: linshibo
+版本: v1.4.0
+创建时间: 2025-08-19
 """
 
 import os

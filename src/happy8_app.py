@@ -4,11 +4,17 @@
 快乐8智能预测系统 - Web界面
 Happy8 Prediction System - Web Interface
 
-基于Streamlit的Web操作界面，提供直观的预测和分析功能。
+基于Streamlit的Web操作界面，提供直观的预测和分析功能：
+- 智能预测: 17种算法可选
+- 历史数据分析: 数据统计和可视化
+- 算法对比: 多算法性能对比
+- 实时预测: 支持历史验证和未来预测
 
-作者: CodeBuddy
-版本: v1.0
+作者: linshibo
+开发者: linshibo
+版本: v1.4.0
 创建时间: 2025-08-17
+最后更新: 2025-08-19
 """
 
 import streamlit as st
