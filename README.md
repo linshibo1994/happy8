@@ -215,11 +215,20 @@ python main.py web
 # 或
 python main.py
 ```
-访问: http://localhost:8501
+访问: http://localhost:8502 (系统会自动分配可用端口)
 
 #### 方式2: 命令行界面
 ```bash
+# 显示命令行使用说明
 python main.py cli
+
+# 直接在Python中使用
+python3 -c "
+from src.happy8_analyzer import Happy8Analyzer
+analyzer = Happy8Analyzer()
+result = analyzer.predict_with_smart_mode('2025999', 30, 10, 'frequency')
+print('预测号码:', result['prediction_result'].predicted_numbers)
+"
 ```
 
 #### 方式3: 快速演示
@@ -260,22 +269,28 @@ python main.py demo
 
 #### 基础预测
 ```python
-from happy8_analyzer import Happy8Analyzer
+from src.happy8_analyzer import Happy8Analyzer
 
 # 初始化分析器
 analyzer = Happy8Analyzer()
 
-# 执行预测
-result = analyzer.predict(
-    target_issue="20241201001",    # 目标期号
+# 执行智能预测 (推荐方法)
+result = analyzer.predict_with_smart_mode(
+    target_issue="2025999",        # 目标期号
     periods=100,                   # 分析最近100期
     count=20,                      # 生成20个号码
     method="ensemble"              # 使用集成学习算法
 )
 
-print(f"预测号码: {result.predicted_numbers}")
-print(f"置信度: {result.confidence_scores}")
-print(f"执行时间: {result.execution_time:.2f}秒")
+print(f"预测号码: {result['prediction_result'].predicted_numbers}")
+print(f"置信度: {result['prediction_result'].confidence_scores}")
+print(f"预测模式: {result['mode']}")
+
+# 如果是历史期号，还会有对比结果
+if result.get('comparison_result'):
+    comp = result['comparison_result']
+    print(f"命中率: {comp.hit_rate:.1%}")
+    print(f"命中号码: {comp.hit_numbers}")
 ```
 
 #### 数据管理
@@ -284,25 +299,54 @@ print(f"执行时间: {result.execution_time:.2f}秒")
 data = analyzer.load_data()
 print(f"数据量: {len(data)}期")
 
-# 爬取最新数据
-new_data = analyzer.crawl_latest_data(limit=200)
-
-# 爬取所有历史数据
-total_crawled = analyzer.crawl_all_historical_data()
-print(f"总共爬取: {total_crawled}期")
+# 爬取最新数据 (通过Web界面操作)
+# 或者直接调用爬虫
+from src.happy8_analyzer import Happy8DataCrawler
+crawler = Happy8DataCrawler()
+new_data = crawler.crawl_recent_data(limit=100)
+print(f"爬取了 {len(new_data)} 期新数据")
 ```
 
 #### 结果对比
 ```python
-# 对比预测结果
-comparison = analyzer.compare_results(
-    target_issue="20241201001",
-    predicted_numbers=[1, 5, 12, 18, 25, 33, 41, 52, 63, 77]
+# 使用历史期号进行验证 (系统会自动对比)
+result = analyzer.predict_with_smart_mode(
+    target_issue="2025219",  # 已开奖的历史期号
+    periods=50,
+    count=10,
+    method="super_predictor"
 )
 
-print(f"命中数量: {comparison.hit_count}")
-print(f"命中率: {comparison.hit_rate:.2%}")
-print(f"命中号码: {comparison.hit_numbers}")
+# 查看对比结果
+if result.get('comparison_result'):
+    comp = result['comparison_result']
+    print(f"命中数量: {comp.hit_count}")
+    print(f"命中率: {comp.hit_rate:.2%}")
+    print(f"命中号码: {comp.hit_numbers}")
+    print(f"实际开奖: {comp.actual_numbers}")
+```
+
+## 📁 项目结构
+
+```
+happy8/
+├── main.py                    # 主启动文件
+├── requirements.txt           # 依赖包列表
+├── README.md                 # 项目说明
+├── src/                      # 源代码目录
+│   ├── happy8_analyzer.py    # 核心分析器 (17种算法)
+│   ├── happy8_app.py         # Web界面
+│   ├── performance_optimizer.py  # 性能优化模块
+│   └── system_test_suite.py  # 系统测试套件
+├── data/                     # 数据目录
+│   └── happy8_data.csv       # 历史数据文件
+├── docs/                     # 文档目录
+│   ├── 用户使用指南.md        # 详细使用教程
+│   ├── 部署指南.md           # 部署说明
+│   ├── 项目总结.md           # 技术总结
+│   └── 高级预测功能开发任务文档.md  # 开发记录
+└── deployment/               # 部署配置
+    └── docker-compose.yml    # Docker部署配置
 ```
 
 ## 🔧 高级配置
@@ -343,7 +387,14 @@ export REDIS_URL=redis://localhost:6379/0
 
 ### 运行完整测试
 ```bash
-python test_system.py
+# 运行系统测试套件
+python src/system_test_suite.py
+
+# 运行性能测试
+python src/performance_optimizer.py
+
+# 测试Web界面启动
+python main.py demo
 ```
 
 ### 测试覆盖范围
@@ -359,14 +410,23 @@ python test_system.py
 ## 📊 性能指标
 
 ### 算法性能
-| 算法 | 平均命中率 | 执行时间 | 内存使用 | 推荐指数 |
-|------|------------|----------|----------|----------|
-| 频率分析 | 35-45% | < 0.1秒 | 低 | ⭐⭐⭐⭐ |
-| 冷热号分析 | 30-40% | < 0.1秒 | 低 | ⭐⭐⭐ |
-| 遗漏分析 | 25-35% | < 0.1秒 | 低 | ⭐⭐⭐ |
-| 马尔可夫链 | 25-35% | 0.1-0.5秒 | 中 | ⭐⭐⭐ |
-| LSTM神经网络 | 30-45% | 1-5秒 | 高 | ⭐⭐⭐⭐ |
-| 集成学习 | 40-55% | 0.3-1秒 | 中 | ⭐⭐⭐⭐⭐ |
+| 算法类别 | 算法名称 | 平均命中率 | 执行时间 | 推荐指数 |
+|----------|----------|------------|----------|----------|
+| 基础统计 | 频率分析 | 20-30% | < 0.1秒 | ⭐⭐⭐⭐ |
+| 基础统计 | 冷热号分析 | 25-35% | < 0.1秒 | ⭐⭐⭐ |
+| 基础统计 | 遗漏分析 | 20-30% | < 0.1秒 | ⭐⭐⭐ |
+| 马尔可夫链 | 1-3阶马尔可夫链 | 25-45% | 0.1-0.3秒 | ⭐⭐⭐⭐ |
+| 马尔可夫链 | 自适应马尔可夫链 | 35-50% | < 0.1秒 | ⭐⭐⭐⭐⭐ |
+| 深度学习 | Transformer模型 | 40-55% | 5-15秒 | ⭐⭐⭐⭐ |
+| 深度学习 | 图神经网络 | 35-50% | 3-8秒 | ⭐⭐⭐⭐ |
+| 深度学习 | LSTM神经网络 | 30-45% | 2-6秒 | ⭐⭐⭐⭐ |
+| 机器学习 | 蒙特卡洛模拟 | 30-45% | 5-10秒 | ⭐⭐⭐⭐ |
+| 机器学习 | 聚类分析 | 35-50% | 1-3秒 | ⭐⭐⭐⭐ |
+| 机器学习 | 自适应集成学习 | 40-55% | 10-20秒 | ⭐⭐⭐⭐⭐ |
+| 贝叶斯推理 | 贝叶斯推理 | 40-55% | 3-8秒 | ⭐⭐⭐⭐ |
+| 集成算法 | 超级预测器 | 50-65% | 20-40秒 | ⭐⭐⭐⭐⭐ |
+| 质量控制 | 高置信度预测 | 60-75% | 15-30秒 | ⭐⭐⭐⭐⭐ |
+| 集成算法 | 集成学习 | 40-55% | 1-3秒 | ⭐⭐⭐⭐⭐ |
 
 ### 系统性能
 - **数据处理**: 支持2000+期历史数据

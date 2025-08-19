@@ -46,20 +46,37 @@ def start_web_app():
 def start_cli():
     """启动命令行界面"""
     print("🖥️ 启动快乐8预测系统命令行界面...")
-    
-    try:
-        subprocess.run([sys.executable, "scripts/start.py", "cli"])
-    except Exception as e:
-        print(f"❌ 命令行界面启动失败: {e}")
+    print("使用方法:")
+    print("  python -c \"from src.happy8_analyzer import Happy8Analyzer; analyzer = Happy8Analyzer(); print('系统已初始化，可以开始使用')\"")
+    print("或者直接在Python中导入使用:")
+    print("  from src.happy8_analyzer import Happy8Analyzer")
 
 def run_demo():
     """运行演示"""
     print("🎯 运行快乐8预测系统演示...")
-    
+
     try:
-        subprocess.run([sys.executable, "scripts/demo.py"])
+        # 直接运行演示代码
+        from src.happy8_analyzer import Happy8Analyzer
+
+        print("初始化分析器...")
+        analyzer = Happy8Analyzer()
+
+        print("加载数据...")
+        data = analyzer.load_data()
+        print(f"成功加载 {len(data)} 期历史数据")
+
+        print("执行预测演示...")
+        result = analyzer.predict_with_smart_mode('2025999', 30, 5, 'frequency')
+        numbers = result['prediction_result'].predicted_numbers
+        print(f"预测结果: {numbers}")
+
+        print("✅ 演示完成！")
+
     except Exception as e:
         print(f"❌ 演示运行失败: {e}")
+        import traceback
+        traceback.print_exc()
 
 def deploy_system():
     """部署系统"""
@@ -73,14 +90,15 @@ def deploy_system():
 def show_help():
     """显示帮助信息"""
     print("""
-🎯 快乐8智能预测系统
+🎯 快乐8智能预测系统 v1.4.0
+作者: linshibo
 
 使用方法:
   python main.py [命令]
 
 可用命令:
   web      启动Web界面 (默认)
-  cli      启动命令行界面  
+  cli      显示命令行使用说明
   demo     运行系统演示
   deploy   部署系统
   help     显示此帮助信息
@@ -88,11 +106,20 @@ def show_help():
 示例:
   python main.py          # 启动Web界面
   python main.py web      # 启动Web界面
-  python main.py cli      # 启动命令行界面
+  python main.py cli      # 显示命令行使用说明
   python main.py demo     # 运行演示
   python main.py deploy   # 部署系统
 
-更多信息请查看 README.md
+🌟 系统特性:
+  - 17种预测算法 (统计学+机器学习+深度学习+贝叶斯推理)
+  - 智能模式切换 (历史验证+未来预测)
+  - Web界面 + 命令行双模式
+  - 完整的质量控制体系
+
+📚 更多信息请查看:
+  - README.md (项目概述)
+  - docs/用户使用指南.md (详细教程)
+  - docs/部署指南.md (部署方案)
     """)
 
 def main():
@@ -113,12 +140,21 @@ def main():
     args = parser.parse_args()
     
     # 检查项目结构
-    required_dirs = ['src', 'data', 'deployment', 'scripts']
+    required_dirs = ['src', 'data']
     missing_dirs = [d for d in required_dirs if not Path(d).exists()]
-    
+
     if missing_dirs:
         print(f"❌ 缺少必要目录: {', '.join(missing_dirs)}")
         print("请确保项目结构完整")
+        return
+
+    # 检查关键文件
+    required_files = ['src/happy8_analyzer.py', 'src/happy8_app.py']
+    missing_files = [f for f in required_files if not Path(f).exists()]
+
+    if missing_files:
+        print(f"❌ 缺少关键文件: {', '.join(missing_files)}")
+        print("请确保项目文件完整")
         return
     
     # 执行对应命令
