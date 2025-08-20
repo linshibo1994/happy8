@@ -394,39 +394,196 @@ class Happy8Crawler:
         return results
     
     def _crawl_from_zhcw(self, count: int) -> List[Happy8Result]:
-        """从中彩网爬取数据 - 备用数据源"""
+        """从中彩网爬取数据 - 通过API接口获取真实数据"""
         results = []
 
-        # 中彩网快乐8页面 (由于页面结构复杂，作为备用数据源)
-        base_url = "https://www.zhcw.com/kjxx/kl8/"
+        # 中彩网快乐8数据API接口
+        api_url = "https://jc.zhcw.com/port/client_json.php"
 
         try:
-            print(f"正在尝试从中彩网获取数据: {base_url}")
+            print(f"正在从中彩网API获取数据...")
 
-            # 获取页面数据
+            # 尝试不同的参数组合来获取数据
+            param_combinations = [
+                {
+                    'czname': 'kl8',
+                    'type': 'kjjg',
+                    'pageSize': min(count, 100),
+                    'pageNo': 1
+                },
+                {
+                    'game': 'kl8',
+                    'action': 'kjjg',
+                    'limit': min(count, 100),
+                    'page': 1
+                },
+                {
+                    'lottery': 'kl8',
+                    'method': 'getKjjg',
+                    'size': min(count, 100),
+                    'start': 0
+                }
+            ]
+
+            for i, params in enumerate(param_combinations):
+                try:
+                    print(f"尝试参数组合 {i+1}...")
+                    response = self.session.get(api_url, params=params, timeout=10)
+                    response.raise_for_status()
+
+                    # 检查响应内容
+                    if "请求数据参数不全错误" in response.text:
+                        print(f"参数组合 {i+1} 失败: 参数不全")
+                        continue
+
+                    # 尝试解析JSON数据
+                    try:
+                        data = response.json()
+                        if isinstance(data, dict) and 'data' in data:
+                            items = data['data']
+                            if isinstance(items, list) and len(items) > 0:
+                                print(f"✅ 成功获取中彩网数据，参数组合 {i+1}")
+                                results = self._parse_zhcw_data(items, count)
+                                if results:
+                                    return results
+                    except:
+                        pass
+
+                    # 如果不是JSON，尝试解析HTML
+                    if '<' in response.text and '>' in response.text:
+                        print(f"尝试解析HTML响应...")
+                        results = self._parse_zhcw_html(response.text, count)
+                        if results:
+                            return results
+
+                except Exception as e:
+                    print(f"参数组合 {i+1} 请求失败: {e}")
+                    continue
+
+            # 如果API都失败，尝试解析主页面
+            print("API接口失败，尝试解析主页面...")
+            return self._crawl_zhcw_webpage(count)
+
+        except Exception as e:
+            print(f"❌ 中彩网爬取失败: {e}")
+            return []
+
+    def _parse_zhcw_data(self, items: list, count: int) -> List[Happy8Result]:
+        """解析中彩网API返回的数据"""
+        results = []
+
+        for item in items[:count]:
+            try:
+                # 尝试不同的字段名
+                issue = item.get('qh') or item.get('issue') or item.get('period') or ''
+                date_str = item.get('kjsj') or item.get('date') or item.get('openDate') or ''
+                numbers_str = item.get('kjhm') or item.get('numbers') or item.get('openCode') or ''
+
+                if issue and numbers_str:
+                    # 解析号码
+                    if ',' in numbers_str:
+                        numbers = [int(x.strip()) for x in numbers_str.split(',') if x.strip().isdigit()]
+                    elif ' ' in numbers_str:
+                        numbers = [int(x.strip()) for x in numbers_str.split() if x.strip().isdigit()]
+                    else:
+                        # 尝试按固定长度分割
+                        numbers = []
+                        for i in range(0, len(numbers_str), 2):
+                            if i+1 < len(numbers_str):
+                                num_str = numbers_str[i:i+2]
+                                if num_str.isdigit():
+                                    numbers.append(int(num_str))
+
+                    if len(numbers) == 20:
+                        # 解析日期
+                        if ' ' in date_str:
+                            date_part, time_part = date_str.split(' ', 1)
+                        else:
+                            date_part = date_str
+                            time_part = "21:30:00"
+
+                        result = Happy8Result(
+                            issue=issue,
+                            date=date_part,
+                            time=time_part,
+                            numbers=sorted(numbers)
+                        )
+                        results.append(result)
+
+            except Exception as e:
+                print(f"解析中彩网数据项失败: {e}")
+                continue
+
+        return results
+
+    def _parse_zhcw_html(self, html_content: str, count: int) -> List[Happy8Result]:
+        """解析中彩网HTML响应"""
+        results = []
+
+        try:
+            soup = BeautifulSoup(html_content, 'html.parser')
+
+            # 查找可能的数据表格
+            tables = soup.find_all('table')
+            for table in tables:
+                rows = table.find_all('tr')
+                for row in rows[1:]:  # 跳过表头
+                    cells = row.find_all(['td', 'th'])
+                    if len(cells) >= 3:
+                        try:
+                            issue = cells[0].get_text(strip=True)
+                            date_str = cells[1].get_text(strip=True)
+                            numbers_cell = cells[2]
+
+                            # 提取号码
+                            numbers = []
+                            number_elements = numbers_cell.find_all(['span', 'div', 'em'])
+                            for elem in number_elements:
+                                text = elem.get_text(strip=True)
+                                if text.isdigit() and 1 <= int(text) <= 80:
+                                    numbers.append(int(text))
+
+                            if len(numbers) == 20 and issue:
+                                result = Happy8Result(
+                                    issue=issue,
+                                    date=date_str.split(' ')[0] if ' ' in date_str else date_str,
+                                    time=date_str.split(' ')[1] if ' ' in date_str else "21:30:00",
+                                    numbers=sorted(numbers)
+                                )
+                                results.append(result)
+
+                                if len(results) >= count:
+                                    break
+
+                        except Exception as e:
+                            continue
+
+                if len(results) >= count:
+                    break
+
+        except Exception as e:
+            print(f"解析中彩网HTML失败: {e}")
+
+        return results
+
+    def _crawl_zhcw_webpage(self, count: int) -> List[Happy8Result]:
+        """从中彩网主页面爬取数据"""
+        results = []
+
+        try:
+            base_url = "https://www.zhcw.com/kjxx/kl8/"
             response = self.session.get(base_url, timeout=10)
             response.raise_for_status()
             response.encoding = 'utf-8'
 
-            # 中彩网使用JavaScript动态加载数据，页面解析较复杂
-            # 这里作为备用数据源，如果500彩票网失败时使用
-            soup = BeautifulSoup(response.text, 'html.parser')
-
-            # 尝试查找数据容器
-            # 由于中彩网页面结构经常变化，这里只做基础检查
-            if "快乐8" in response.text and "开奖号码" in response.text:
-                print("✅ 中彩网页面可访问，但需要JavaScript解析")
-                print("💡 建议使用500彩票网作为主要数据源")
-            else:
-                print("❌ 中彩网页面结构异常")
-
-            # 由于中彩网页面复杂，暂时返回空结果
-            # 实际项目中可以使用Selenium等工具处理JavaScript
-            return []
+            # 由于页面使用JavaScript动态加载，这里只能获取静态内容
+            # 实际项目中建议使用Selenium处理JavaScript
+            print("💡 中彩网使用JavaScript动态加载，建议使用500彩票网作为主要数据源")
 
         except Exception as e:
-            print(f"❌ 中彩网访问失败: {e}")
-            return []
+            print(f"中彩网主页面访问失败: {e}")
+
+        return results
 
     
     def _crawl_from_lottery_gov(self, count: int) -> List[Happy8Result]:
