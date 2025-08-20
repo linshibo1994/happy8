@@ -103,10 +103,31 @@ if 'prediction_history' not in st.session_state:
 def get_analyzer():
     """获取分析器实例（缓存）"""
     try:
-        return Happy8Analyzer()
+        analyzer = Happy8Analyzer()
+        # 强制清除数据缓存，确保每次都重新加载最新数据
+        analyzer.historical_data = None
+        analyzer.data_manager._data_cache = None
+        return analyzer
     except Exception as e:
         st.error(f"初始化分析器失败: {e}")
         return None
+
+def clear_analyzer_cache():
+    """清除分析器缓存"""
+    if hasattr(st, 'cache_resource'):
+        get_analyzer.clear()
+
+def refresh_analyzer_data():
+    """刷新分析器数据"""
+    analyzer = get_analyzer()
+    if analyzer:
+        # 清除所有数据缓存
+        analyzer.historical_data = None
+        analyzer.data_manager._data_cache = None
+        # 重新加载数据
+        data = analyzer.load_data()
+        return len(data)
+    return 0
 
 def create_number_display(numbers: List[int], number_type: str = "predicted", color_class: str = None) -> str:
     """创建号码显示HTML"""
@@ -291,21 +312,34 @@ def show_data_management():
         return
     
     # 数据状态
-    st.subheader("数据状态")
-    
+    col_title, col_refresh = st.columns([3, 1])
+    with col_title:
+        st.subheader("数据状态")
+    with col_refresh:
+        if st.button("🔄 刷新数据", help="重新加载数据，清除缓存"):
+            with st.spinner("正在刷新数据..."):
+                try:
+                    # 清除缓存并刷新数据
+                    clear_analyzer_cache()
+                    data_count = refresh_analyzer_data()
+                    st.success(f"✅ 数据刷新完成！当前数据量: {data_count} 期")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"数据刷新失败: {e}")
+
     try:
         data = analyzer.load_data()
-        
+
         col1, col2, col3, col4 = st.columns(4)
         col1.metric("总期数", len(data))
-        
+
         if len(data) > 0:
             latest_issue = data.iloc[0]['issue']  # 数据已按最新期号排序
             col2.metric("最新期号", latest_issue)
 
             earliest_issue = data.iloc[-1]['issue']
             col3.metric("最早期号", earliest_issue)
-            
+
             col4.metric("数据完整性", "✓ 正常")
         
         # 数据预览
@@ -423,11 +457,18 @@ def show_data_management():
 def show_prediction_interface():
     """显示预测界面"""
     st.header("🎯 智能预测")
-    
+
     analyzer = get_analyzer()
     if analyzer is None:
         st.error("分析器未初始化")
         return
+
+    # 显示当前数据状态
+    try:
+        data = analyzer.load_data()
+        st.info(f"📊 当前数据量: {len(data)} 期 | 最新期号: {data.iloc[0]['issue'] if len(data) > 0 else '无'} | 💡 如数据显示不正确，请到数据管理页面点击'刷新数据'按钮")
+    except:
+        st.warning("⚠️ 数据加载异常，请到数据管理页面检查数据状态")
     
     # 预测参数配置
     st.subheader("预测参数配置")
