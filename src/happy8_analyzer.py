@@ -308,67 +308,67 @@ class Happy8Crawler:
         """从500彩票网爬取数据"""
         results = []
         
-        # 500彩票网快乐8历史数据接口
-        base_url = "https://www.500.com/kl8/kaijiang.php"
-        
+        # 500彩票网快乐8 XML数据接口 (真实官方数据源)
+        xml_url = "https://kaijiang.500.com/static/info/kaijiang/xml/kl8/list.xml"
+
         try:
-            # 获取最新数据页面
-            response = self.session.get(base_url)
+            print(f"正在从500彩票网XML接口获取数据: {xml_url}")
+
+            # 获取XML数据
+            response = self.session.get(xml_url)
             response.raise_for_status()
-            response.encoding = 'gb2312'
-            
-            soup = BeautifulSoup(response.text, 'html.parser')
-            
-            # 查找开奖数据表格
-            table = soup.find('table', {'class': 'kj_tablelist02'})
-            if not table:
-                raise Exception("未找到数据表格")
-            
-            rows = table.find_all('tr')[1:]  # 跳过表头
-            
-            for row in rows[:count]:
+            response.encoding = 'utf-8'
+
+            # 解析XML数据
+            import xml.etree.ElementTree as ET
+            root = ET.fromstring(response.text)
+
+            # 解析每一行数据
+            for row in root.findall('row')[:count]:
                 try:
-                    cells = row.find_all('td')
-                    if len(cells) < 4:
-                        continue
-                    
-                    # 解析期号
-                    issue = cells[0].text.strip()
-                    
-                    # 解析开奖时间
-                    date_time = cells[1].text.strip()
-                    if ' ' in date_time:
-                        date_str, time_str = date_time.split(' ')
+                    # 获取期号
+                    issue = row.get('expect')
+
+                    # 获取开奖号码
+                    opencode = row.get('opencode')
+                    if opencode:
+                        # 解析号码字符串 "09,10,13,14,22,30,32,34,36,38,43,49,50,54,56,57,58,68,69,76"
+                        numbers = [int(num.strip()) for num in opencode.split(',')]
                     else:
-                        date_str = date_time
-                        time_str = "00:00:00"
-                    
-                    # 解析开奖号码
-                    number_cell = cells[2]
-                    number_spans = number_cell.find_all('span')
-                    
-                    if len(number_spans) >= 20:
-                        numbers = []
-                        for span in number_spans[:20]:
-                            num_text = span.text.strip()
-                            if num_text.isdigit():
-                                numbers.append(int(num_text))
-                        
-                        if len(numbers) == 20:
-                            result = Happy8Result(
-                                issue=issue,
-                                date=date_str,
-                                time=time_str,
-                                numbers=sorted(numbers)
-                            )
-                            results.append(result)
-                
+                        continue
+
+                    # 获取开奖时间
+                    opentime = row.get('opentime')
+                    if opentime:
+                        # 格式: "2025-08-19 21:30:00" -> "2025-08-19"
+                        date_str = opentime.split(' ')[0]
+                        time_str = opentime.split(' ')[1] if ' ' in opentime else "00:00:00"
+                    else:
+                        continue
+
+                    # 验证数据完整性
+                    if issue and len(numbers) == 20 and all(1 <= num <= 80 for num in numbers):
+                        result = Happy8Result(
+                            issue=issue,
+                            date=date_str,
+                            time=time_str,
+                            numbers=sorted(numbers)
+                        )
+                        results.append(result)
+
+                        if len(results) >= count:
+                            break
+                    else:
+                        print(f"数据验证失败 - 期号: {issue}, 号码数量: {len(numbers) if numbers else 0}")
+
                 except Exception as e:
-                    print(f"解析行数据失败: {e}")
+                    print(f"解析单行数据失败: {e}")
                     continue
-            
+
+            print(f"✅ 从500彩票网XML接口成功获取 {len(results)} 期真实数据")
+
         except Exception as e:
-            print(f"500彩票网爬取失败: {e}")
+            print(f"❌ 从500彩票网XML接口爬取数据失败: {e}")
             raise
         
         return results
@@ -378,7 +378,7 @@ class Happy8Crawler:
         results = []
         
         # 中彩网快乐8数据接口
-        base_url = "https://www.zhcw.com/kl8/kaijiangshuju/"
+        base_url = "https://www.zhcw.com/kjxx/kl8/"
         
         try:
             # 计算需要爬取的页数
@@ -460,7 +460,7 @@ class Happy8Crawler:
         results = []
         
         # 中国福利彩票官网API
-        api_url = "https://www.cwl.gov.cn/cwl_admin/front/cwlkj/search/kjxx/findDrawNotice"
+        api_url = "https://www.cwl.gov.cn/ygkj/wqkjgg/kl8/"
         
         try:
             # 计算需要的页数
@@ -706,6 +706,54 @@ class DataManager:
         except Exception as e:
             print(f"数据爬取失败: {e}")
             print("请检查网络连接或稍后重试")
+
+    def crawl_latest_data(self, limit: int = 100) -> int:
+        """增量爬取最新数据 - 只爬取比当前最新期号更新的数据"""
+        print(f"开始增量爬取最新 {limit} 期数据...")
+
+        try:
+            # 获取当前最新期号
+            existing_data = self.load_historical_data()
+            if len(existing_data) > 0:
+                latest_issue = existing_data.iloc[0]['issue']  # 第一行是最新期号
+                print(f"当前最新期号: {latest_issue}")
+            else:
+                latest_issue = None
+                print("当前无历史数据，将爬取初始数据")
+
+            # 爬取最新数据
+            results = self.crawler.crawl_recent_data(limit)
+            if not results:
+                print("未获取到新数据")
+                return 0
+
+            # 过滤出比当前最新期号更新的数据
+            new_results = []
+            if latest_issue:
+                for result in results:
+                    if result.issue > latest_issue:
+                        new_results.append(result)
+                    else:
+                        break  # 数据是按期号倒序的，遇到旧期号就停止
+            else:
+                new_results = results
+
+            if new_results:
+                print(f"发现 {len(new_results)} 期新数据")
+                self._save_data(new_results)
+
+                # 验证保存结果
+                updated_data = self.load_historical_data()
+                new_latest_issue = updated_data.iloc[0]['issue']
+                print(f"✅ 数据更新完成，最新期号: {new_latest_issue}")
+                return len(new_results)
+            else:
+                print("没有发现新数据")
+                return 0
+
+        except Exception as e:
+            print(f"增量爬取失败: {e}")
+            return 0
 
     def crawl_all_historical_data(self):
         """爬取所有可用的历史数据"""

@@ -324,26 +324,33 @@ def show_data_management():
     col1, col2, col3, col4 = st.columns(4)
 
     with col1:
-        if st.button("🕷️ 爬取最新数据", use_container_width=True):
-            count = st.number_input("爬取期数", min_value=100, max_value=2000, value=500, key="crawl_count")
+        if st.button("🔄 增量更新数据", use_container_width=True):
+            limit = st.number_input("检查期数", min_value=10, max_value=200, value=50, key="update_limit",
+                                   help="检查最近N期是否有新数据")
 
-            with st.spinner(f"正在爬取 {count} 期数据..."):
+            with st.spinner(f"正在检查最近 {limit} 期数据..."):
+                try:
+                    new_count = analyzer.data_manager.crawl_latest_data(limit)
+                    if new_count > 0:
+                        st.success(f"✅ 发现并更新了 {new_count} 期新数据!")
+                    else:
+                        st.info("📋 当前数据已是最新，无需更新")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"数据更新失败: {e}")
+
+    with col2:
+        if st.button("🕷️ 初始数据爬取", use_container_width=True):
+            count = st.number_input("爬取期数", min_value=100, max_value=2000, value=1000, key="crawl_count",
+                                   help="首次使用时爬取历史数据")
+
+            with st.spinner(f"正在爬取 {count} 期历史数据..."):
                 try:
                     analyzer.data_manager.crawl_initial_data(count)
-                    st.success("数据爬取完成!")
+                    st.success(f"✅ 初始数据爬取完成！获取 {count} 期数据")
                     st.rerun()
                 except Exception as e:
                     st.error(f"数据爬取失败: {e}")
-
-    with col2:
-        if st.button("📚 爬取所有历史数据", use_container_width=True):
-            with st.spinner("正在爬取所有历史数据，这可能需要几分钟..."):
-                try:
-                    total_crawled = analyzer.crawl_all_historical_data()
-                    st.success(f"历史数据爬取完成！总共获取 {total_crawled} 期数据")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"历史数据爬取失败: {e}")
 
     with col3:
         if st.button("✅ 验证数据", use_container_width=True):
@@ -363,14 +370,55 @@ def show_data_management():
                 except Exception as e:
                     st.error(f"数据验证失败: {e}")
     
-    with col3:
-        if st.button("🔄 更新数据", use_container_width=True):
-            with st.spinner("正在更新数据..."):
+    with col4:
+        if st.button("🗑️ 清空数据", use_container_width=True):
+            if st.checkbox("确认清空所有数据", key="confirm_clear"):
                 try:
-                    # 这里可以实现数据更新逻辑
-                    st.info("数据更新功能开发中...")
+                    if analyzer.data_manager.data_file.exists():
+                        analyzer.data_manager.data_file.unlink()
+                        st.success("数据已清空")
+                        st.rerun()
+                    else:
+                        st.info("没有数据需要清空")
                 except Exception as e:
-                    st.error(f"数据更新失败: {e}")
+                    st.error(f"清空数据失败: {e}")
+
+    # 添加数据源状态检查
+    st.markdown("---")
+    st.subheader("🔍 数据源状态")
+
+    col5, col6 = st.columns(2)
+
+    with col5:
+        if st.button("检查数据源状态", use_container_width=True):
+            with st.spinner("检查数据源状态..."):
+                try:
+                    st.info("🔗 **数据源状态检查**")
+
+                    # 测试500彩票网XML接口
+                    try:
+                        from happy8_analyzer import Happy8Crawler
+                        crawler = Happy8Crawler()
+                        test_results = crawler._crawl_from_500wan(1)
+                        if test_results:
+                            st.success("✅ 500彩票网XML接口: 正常")
+                            st.info(f"最新期号: {test_results[0].issue}")
+                        else:
+                            st.error("❌ 500彩票网XML接口: 异常")
+                    except Exception as e:
+                        st.error(f"❌ 500彩票网XML接口: {e}")
+
+                except Exception as e:
+                    st.error(f"状态检查失败: {e}")
+
+    with col6:
+        st.info("""
+        **数据源说明:**
+        - 🎯 主要数据源: 500彩票网XML接口
+        - 📊 数据格式: 真实官方开奖数据
+        - 🔄 更新方式: 增量更新，只获取新数据
+        - ✅ 数据验证: 自动验证数据完整性
+        """)
 
 def show_prediction_interface():
     """显示预测界面"""
