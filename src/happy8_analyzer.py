@@ -274,36 +274,56 @@ class Happy8Crawler:
         })
         self.session.timeout = 30
     
-    def crawl_recent_data(self, count: int = 1000) -> List[Happy8Result]:
-        """爬取最近的开奖数据"""
+    def crawl_recent_data(self, count: int = 50) -> List[Happy8Result]:
+        """爬取最近的开奖数据 (用于增量更新，默认50期)"""
         print(f"开始爬取最近 {count} 期快乐8数据...")
-        
+
         results = []
-        
-        # 尝试多个数据源
-        data_sources = [
-            self._crawl_from_500wan,
-            self._crawl_from_zhcw,
-            self._crawl_from_lottery_gov
-        ]
-        
-        for crawl_func in data_sources:
-            try:
-                print(f"尝试数据源: {crawl_func.__name__}")
-                results = crawl_func(count)
-                if results:
-                    print(f"成功从 {crawl_func.__name__} 获取 {len(results)} 期数据")
-                    break
-            except Exception as e:
-                print(f"数据源 {crawl_func.__name__} 失败: {e}")
-                continue
-        
+
+        # 优先使用500彩票网XML接口 (最可靠的数据源)
+        try:
+            print("🎯 使用500彩票网XML接口 (主要数据源)")
+            results = self._crawl_from_500wan(count)
+            if results:
+                print(f"✅ 成功从500彩票网获取 {len(results)} 期数据")
+                return results
+        except Exception as e:
+            print(f"❌ 500彩票网失败: {e}")
+
+        # 备用数据源：中彩网
+        try:
+            print("🔄 尝试中彩网 (备用数据源)")
+            results = self._crawl_from_zhcw(count)
+            if results:
+                print(f"✅ 成功从中彩网获取 {len(results)} 期数据")
+                return results
+        except Exception as e:
+            print(f"❌ 中彩网失败: {e}")
+
+        # 备用数据源：官方网站
+        try:
+            print("🔄 尝试官方网站 (备用数据源)")
+            results = self._crawl_from_lottery_gov(count)
+            if results:
+                print(f"✅ 成功从官方网站获取 {len(results)} 期数据")
+                return results
+        except Exception as e:
+            print(f"❌ 官方网站失败: {e}")
+
+        # 最后的备用方案
         if not results:
-            print("所有数据源都失败，尝试备用方案...")
+            print("⚠️ 所有在线数据源都失败，尝试备用数据源...")
             results = self._crawl_backup_data(count)
-        
+
         return results
-    
+
+    def crawl_all_historical_data(self, max_count: int = 2000) -> List[Happy8Result]:
+        """爬取所有历史数据 (用于初始化)"""
+        print(f"开始爬取所有历史数据，最多 {max_count} 期...")
+
+        # 使用相同的数据源，但爬取更多数据
+        return self.crawl_recent_data(max_count)
+
     def _crawl_from_500wan(self, count: int) -> List[Happy8Result]:
         """从500彩票网爬取数据"""
         results = []
@@ -374,86 +394,40 @@ class Happy8Crawler:
         return results
     
     def _crawl_from_zhcw(self, count: int) -> List[Happy8Result]:
-        """从中彩网爬取数据"""
+        """从中彩网爬取数据 - 备用数据源"""
         results = []
-        
-        # 中彩网快乐8数据接口
+
+        # 中彩网快乐8页面 (由于页面结构复杂，作为备用数据源)
         base_url = "https://www.zhcw.com/kjxx/kl8/"
-        
+
         try:
-            # 计算需要爬取的页数
-            pages_needed = (count + 19) // 20  # 每页20条数据
-            
-            for page in range(1, min(pages_needed + 1, 51)):  # 最多爬取50页
-                page_url = f"{base_url}?page={page}"
-                
-                response = self.session.get(page_url)
-                response.raise_for_status()
-                response.encoding = 'utf-8'
-                
-                soup = BeautifulSoup(response.text, 'html.parser')
-                
-                # 查找数据表格
-                table = soup.find('table', {'class': 'kjjg_table'})
-                if not table:
-                    continue
-                
-                rows = table.find_all('tr')[1:]  # 跳过表头
-                
-                for row in rows:
-                    if len(results) >= count:
-                        break
-                    
-                    try:
-                        cells = row.find_all('td')
-                        if len(cells) < 3:
-                            continue
-                        
-                        # 解析期号
-                        issue = cells[0].text.strip()
-                        
-                        # 解析开奖号码
-                        number_cell = cells[1]
-                        number_divs = number_cell.find_all('div', {'class': 'ball'})
-                        
-                        numbers = []
-                        for div in number_divs:
-                            num_text = div.text.strip()
-                            if num_text.isdigit():
-                                numbers.append(int(num_text))
-                        
-                        if len(numbers) == 20:
-                            # 解析日期时间
-                            date_time = cells[2].text.strip()
-                            if ' ' in date_time:
-                                date_str, time_str = date_time.split(' ')
-                            else:
-                                date_str = date_time
-                                time_str = "00:00:00"
-                            
-                            result = Happy8Result(
-                                issue=issue,
-                                date=date_str,
-                                time=time_str,
-                                numbers=sorted(numbers)
-                            )
-                            results.append(result)
-                    
-                    except Exception as e:
-                        print(f"解析行数据失败: {e}")
-                        continue
-                
-                if len(results) >= count:
-                    break
-                
-                # 添加延时避免被封
-                time.sleep(1)
-        
+            print(f"正在尝试从中彩网获取数据: {base_url}")
+
+            # 获取页面数据
+            response = self.session.get(base_url, timeout=10)
+            response.raise_for_status()
+            response.encoding = 'utf-8'
+
+            # 中彩网使用JavaScript动态加载数据，页面解析较复杂
+            # 这里作为备用数据源，如果500彩票网失败时使用
+            soup = BeautifulSoup(response.text, 'html.parser')
+
+            # 尝试查找数据容器
+            # 由于中彩网页面结构经常变化，这里只做基础检查
+            if "快乐8" in response.text and "开奖号码" in response.text:
+                print("✅ 中彩网页面可访问，但需要JavaScript解析")
+                print("💡 建议使用500彩票网作为主要数据源")
+            else:
+                print("❌ 中彩网页面结构异常")
+
+            # 由于中彩网页面复杂，暂时返回空结果
+            # 实际项目中可以使用Selenium等工具处理JavaScript
+            return []
+
         except Exception as e:
-            print(f"中彩网爬取失败: {e}")
-            raise
-        
-        return results
+            print(f"❌ 中彩网访问失败: {e}")
+            return []
+
     
     def _crawl_from_lottery_gov(self, count: int) -> List[Happy8Result]:
         """从官方彩票网站爬取数据"""
@@ -521,9 +495,9 @@ class Happy8Crawler:
                 time.sleep(2)
         
         except Exception as e:
-            print(f"官网爬取失败: {e}")
-            raise
-        
+            print(f"❌ 官方网站访问失败: {e}")
+            return []
+
         return results
     
     def _crawl_backup_data(self, count: int) -> List[Happy8Result]:
@@ -841,7 +815,25 @@ class DataManager:
         print(f"累计爬取请求: {total_crawled} 期")
 
         return actual_added
-    
+
+    def crawl_all_historical_data(self, max_count: int = 2000) -> int:
+        """爬取所有历史数据的简化接口"""
+        print(f"开始爬取所有历史数据，最多 {max_count} 期...")
+
+        try:
+            # 使用爬虫的历史数据爬取方法
+            results = self.crawler.crawl_all_historical_data(max_count)
+            if results:
+                self._save_data(results)
+                print(f"✅ 成功爬取并保存 {len(results)} 期历史数据")
+                return len(results)
+            else:
+                print("❌ 未获取到历史数据")
+                return 0
+        except Exception as e:
+            print(f"❌ 爬取所有历史数据失败: {e}")
+            return 0
+
     def _save_data(self, results: List[Happy8Result]):
         """保存数据到CSV文件"""
         data_list = []
