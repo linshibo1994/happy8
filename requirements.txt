@@ -1,5 +1,5 @@
-# 快乐8智能预测系统依赖包
-# Happy8 Prediction System Requirements
+# 快乐8智能预测系统依赖包 - Streamlit Cloud优化版
+# Happy8 Prediction System Requirements - Streamlit Cloud Optimized
 
 # 核心数据处理
 pandas>=1.5.0
@@ -9,11 +9,11 @@ numpy>=1.21.0
 scikit-learn>=1.2.0
 scipy>=1.9.0
 
-# 深度学习
-tensorflow>=2.10.0
-torch>=2.0.0
-torch-geometric>=2.3.0
-transformers>=4.30.0
+# 深度学习 (轻量化版本)
+tensorflow-cpu>=2.10.0
+# torch>=2.0.0  # 注释掉以减少内存使用
+# torch-geometric>=2.3.0  # 注释掉以减少内存使用
+# transformers>=4.30.0  # 注释掉以减少内存使用
 
 # 数据可视化
 matplotlib>=3.6.0
@@ -27,11 +27,11 @@ streamlit>=1.25.0
 requests>=2.28.0
 beautifulsoup4>=4.11.0
 
-# 超参数优化 (可选)
-optuna>=3.2.0
+# 超参数优化 (可选，云端部署时注释)
+# optuna>=3.2.0
 
-# 分布式计算 (可选)
-ray>=2.5.0
+# 分布式计算 (可选，云端部署时注释)
+# ray>=2.5.0
 
 # 其他工具
 psutil>=5.9.0
