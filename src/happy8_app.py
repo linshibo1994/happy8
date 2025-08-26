@@ -103,10 +103,31 @@ if 'prediction_history' not in st.session_state:
 def get_analyzer():
     """获取分析器实例（缓存）"""
     try:
-        return Happy8Analyzer()
+        analyzer = Happy8Analyzer()
+        # 强制清除数据缓存，确保每次都重新加载最新数据
+        analyzer.historical_data = None
+        analyzer.data_manager._data_cache = None
+        return analyzer
     except Exception as e:
         st.error(f"初始化分析器失败: {e}")
         return None
+
+def clear_analyzer_cache():
+    """清除分析器缓存"""
+    if hasattr(st, 'cache_resource'):
+        get_analyzer.clear()
+
+def refresh_analyzer_data():
+    """刷新分析器数据"""
+    analyzer = get_analyzer()
+    if analyzer:
+        # 清除所有数据缓存
+        analyzer.historical_data = None
+        analyzer.data_manager._data_cache = None
+        # 重新加载数据
+        data = analyzer.load_data()
+        return len(data)
+    return 0
 
 def create_number_display(numbers: List[int], number_type: str = "predicted", color_class: str = None) -> str:
     """创建号码显示HTML"""
@@ -291,21 +312,34 @@ def show_data_management():
         return
     
     # 数据状态
-    st.subheader("数据状态")
-    
+    col_title, col_refresh = st.columns([3, 1])
+    with col_title:
+        st.subheader("数据状态")
+    with col_refresh:
+        if st.button("🔄 刷新数据", help="重新加载数据，清除缓存"):
+            with st.spinner("正在刷新数据..."):
+                try:
+                    # 清除缓存并刷新数据
+                    clear_analyzer_cache()
+                    data_count = refresh_analyzer_data()
+                    st.success(f"✅ 数据刷新完成！当前数据量: {data_count} 期")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"数据刷新失败: {e}")
+
     try:
         data = analyzer.load_data()
-        
+
         col1, col2, col3, col4 = st.columns(4)
         col1.metric("总期数", len(data))
-        
+
         if len(data) > 0:
             latest_issue = data.iloc[0]['issue']  # 数据已按最新期号排序
             col2.metric("最新期号", latest_issue)
 
             earliest_issue = data.iloc[-1]['issue']
             col3.metric("最早期号", earliest_issue)
-            
+
             col4.metric("数据完整性", "✓ 正常")
         
         # 数据预览
@@ -324,26 +358,33 @@ def show_data_management():
     col1, col2, col3, col4 = st.columns(4)
 
     with col1:
-        if st.button("🕷️ 爬取最新数据", use_container_width=True):
-            count = st.number_input("爬取期数", min_value=100, max_value=2000, value=500, key="crawl_count")
+        if st.button("🔄 增量更新数据", use_container_width=True):
+            limit = st.number_input("检查期数", min_value=10, max_value=200, value=50, key="update_limit",
+                                   help="检查最近N期是否有新数据")
 
-            with st.spinner(f"正在爬取 {count} 期数据..."):
+            with st.spinner(f"正在检查最近 {limit} 期数据..."):
+                try:
+                    new_count = analyzer.data_manager.crawl_latest_data(limit)
+                    if new_count > 0:
+                        st.success(f"✅ 发现并更新了 {new_count} 期新数据!")
+                    else:
+                        st.info("📋 当前数据已是最新，无需更新")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"数据更新失败: {e}")
+
+    with col2:
+        if st.button("🕷️ 初始数据爬取", use_container_width=True):
+            count = st.number_input("爬取期数", min_value=100, max_value=2000, value=1000, key="crawl_count",
+                                   help="首次使用时爬取历史数据")
+
+            with st.spinner(f"正在爬取 {count} 期历史数据..."):
                 try:
                     analyzer.data_manager.crawl_initial_data(count)
-                    st.success("数据爬取完成!")
+                    st.success(f"✅ 初始数据爬取完成！获取 {count} 期数据")
                     st.rerun()
                 except Exception as e:
                     st.error(f"数据爬取失败: {e}")
-
-    with col2:
-        if st.button("📚 爬取所有历史数据", use_container_width=True):
-            with st.spinner("正在爬取所有历史数据，这可能需要几分钟..."):
-                try:
-                    total_crawled = analyzer.crawl_all_historical_data()
-                    st.success(f"历史数据爬取完成！总共获取 {total_crawled} 期数据")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"历史数据爬取失败: {e}")
 
     with col3:
         if st.button("✅ 验证数据", use_container_width=True):
@@ -363,23 +404,71 @@ def show_data_management():
                 except Exception as e:
                     st.error(f"数据验证失败: {e}")
     
-    with col3:
-        if st.button("🔄 更新数据", use_container_width=True):
-            with st.spinner("正在更新数据..."):
+    with col4:
+        if st.button("🗑️ 清空数据", use_container_width=True):
+            if st.checkbox("确认清空所有数据", key="confirm_clear"):
                 try:
-                    # 这里可以实现数据更新逻辑
-                    st.info("数据更新功能开发中...")
+                    if analyzer.data_manager.data_file.exists():
+                        analyzer.data_manager.data_file.unlink()
+                        st.success("数据已清空")
+                        st.rerun()
+                    else:
+                        st.info("没有数据需要清空")
                 except Exception as e:
-                    st.error(f"数据更新失败: {e}")
+                    st.error(f"清空数据失败: {e}")
+
+    # 添加数据源状态检查
+    st.markdown("---")
+    st.subheader("🔍 数据源状态")
+
+    col5, col6 = st.columns(2)
+
+    with col5:
+        if st.button("检查数据源状态", use_container_width=True):
+            with st.spinner("检查数据源状态..."):
+                try:
+                    st.info("🔗 **数据源状态检查**")
+
+                    # 测试500彩票网XML接口
+                    try:
+                        from happy8_analyzer import Happy8Crawler
+                        crawler = Happy8Crawler()
+                        test_results = crawler._crawl_from_500wan(1)
+                        if test_results:
+                            st.success("✅ 500彩票网XML接口: 正常")
+                            st.info(f"最新期号: {test_results[0].issue}")
+                        else:
+                            st.error("❌ 500彩票网XML接口: 异常")
+                    except Exception as e:
+                        st.error(f"❌ 500彩票网XML接口: {e}")
+
+                except Exception as e:
+                    st.error(f"状态检查失败: {e}")
+
+    with col6:
+        st.info("""
+        **数据源说明:**
+        - 🎯 主要数据源: 500彩票网XML接口
+        - 📊 数据格式: 真实官方开奖数据
+        - 🔄 更新方式: 增量更新，只获取新数据
+        - ✅ 数据验证: 自动验证数据完整性
+        """)
 
 def show_prediction_interface():
     """显示预测界面"""
     st.header("🎯 智能预测")
-    
+
     analyzer = get_analyzer()
     if analyzer is None:
         st.error("分析器未初始化")
         return
+
+    # 显示当前数据状态
+    try:
+        data = analyzer.load_data()
+        st.info(f"📊 当前数据量: {len(data)} 期 | 最新期号: {data.iloc[0]['issue'] if len(data) > 0 else '无'} | 💡 如数据显示不正确，请到数据管理页面点击'刷新数据'按钮")
+    except:
+        st.warning("⚠️ 数据加载异常，请到数据管理页面检查数据状态")
     
     # 预测参数配置
     st.subheader("预测参数配置")
