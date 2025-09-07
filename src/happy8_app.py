@@ -30,7 +30,7 @@ import json
 
 # 导入核心分析器
 try:
-    from happy8_analyzer import Happy8Analyzer, PredictionResult, ComparisonResult
+    from happy8_analyzer import Happy8Analyzer, PredictionResult, ComparisonResult, PairFrequencyResult, PairFrequencyItem
 except ImportError:
     st.error("无法导入核心分析器，请确保 happy8_analyzer.py 文件存在")
     st.stop()
@@ -104,12 +104,10 @@ def get_analyzer():
     """获取分析器实例（缓存）"""
     try:
         analyzer = Happy8Analyzer()
-        # 强制清除数据缓存，确保每次都重新加载最新数据
-        analyzer.historical_data = None
-        analyzer.data_manager._data_cache = None
         return analyzer
     except Exception as e:
         st.error(f"初始化分析器失败: {e}")
+        st.exception(e)
         return None
 
 def clear_analyzer_cache():
@@ -180,8 +178,8 @@ def show_homepage():
             <ul>
                 <li>号码范围: 1-80号</li>
                 <li>开奖号码: 每期20个</li>
-                <li>开奖频率: 每5分钟一期</li>
-                <li>每天约288期</li>
+                <li>开奖频率: 每天一期</li>
+                <li>期号格式: 如2025238</li>
             </ul>
         </div>
         """, unsafe_allow_html=True)
@@ -221,10 +219,34 @@ def show_homepage():
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
+        # 获取默认期号（基于当前日期的合理期号）
+        def get_default_issue():
+            try:
+                analyzer = get_analyzer()
+                if analyzer:
+                    data = analyzer.load_data()
+                    if not data.empty:
+                        # 获取最新期号，并生成下一期号作为预测目标
+                        latest_issue = data['issue'].iloc[0]
+                        # 期号格式如2025238，提取年份和期数
+                        year = int(str(latest_issue)[:4])
+                        period = int(str(latest_issue)[4:])
+                        # 生成下一期号
+                        next_period = period + 1
+                        return f"{year}{next_period:03d}"
+            except:
+                pass
+            # 如果无法获取数据，使用基于当前日期的期号
+            from datetime import datetime
+            current_date = datetime.now()
+            # 计算当年的天数作为期号
+            day_of_year = current_date.timetuple().tm_yday
+            return f"{current_date.year}{day_of_year:03d}"
+        
         target_issue = st.text_input(
             "目标期号", 
-            value=f"{datetime.now().strftime('%Y%m%d')}001",
-            help="输入要预测的期号"
+            value=get_default_issue(),
+            help="输入要预测的期号，格式如：2025238"
         )
     
     with col2:
@@ -257,10 +279,24 @@ def show_homepage():
         )
     
     with col3:
-        periods = st.selectbox("分析期数", [100, 200, 300, 500], index=2)
+        periods = st.number_input(
+            "分析期数", 
+            min_value=50, 
+            max_value=2000, 
+            value=300, 
+            step=50,
+            help="用于分析的历史期数（建议50-2000期）"
+        )
     
     with col4:
-        count = st.selectbox("生成号码数", [20, 30, 40, 50], index=1)
+        count = st.number_input(
+            "生成号码数", 
+            min_value=5, 
+            max_value=80, 
+            value=30, 
+            step=5,
+            help="生成的预测号码数量（建议20-50个）"
+        )
     
     if st.button("🎯 开始预测", type="primary", use_container_width=True):
         with st.spinner("正在执行预测..."):
@@ -476,25 +512,49 @@ def show_prediction_interface():
     col1, col2 = st.columns(2)
     
     with col1:
+        # 获取默认期号（基于最新数据的下一期）
+        def get_smart_default_issue():
+            try:
+                if len(data) > 0:
+                    # 获取最新期号，并生成下一期号作为预测目标
+                    latest_issue = data.iloc[0]['issue']
+                    # 期号格式如2025238，提取年份和期数
+                    year = int(str(latest_issue)[:4])
+                    period = int(str(latest_issue)[4:])
+                    # 生成下一期号
+                    next_period = period + 1
+                    return f"{year}{next_period:03d}"
+            except:
+                pass
+            # 如果无法获取数据，使用基于当前日期的期号
+            from datetime import datetime
+            current_date = datetime.now()
+            day_of_year = current_date.timetuple().tm_yday
+            return f"{current_date.year}{day_of_year:03d}"
+        
         target_issue = st.text_input(
             "目标期号", 
-            value=f"{datetime.now().strftime('%Y%m%d')}001",
-            help="输入要预测的期号"
+            value=get_smart_default_issue(),
+            help="输入要预测的期号，格式如：2025238"
         )
         
-        analysis_periods = st.selectbox(
+        analysis_periods = st.number_input(
             "分析期数",
-            [100, 200, 300, 500, 1000],
-            index=2,
-            help="用于分析的历史期数"
+            min_value=50,
+            max_value=2000,
+            value=300,
+            step=50,
+            help="用于分析的历史期数（建议50-2000期）"
         )
     
     with col2:
-        predict_count = st.selectbox(
+        predict_count = st.number_input(
             "生成号码数",
-            [10, 20, 30, 40, 50],
-            index=2,
-            help="生成的预测号码数量"
+            min_value=5,
+            max_value=80,
+            value=30,
+            step=5,
+            help="生成的预测号码数量（建议20-50个）"
         )
         
         method = st.selectbox(
@@ -542,15 +602,20 @@ def show_prediction_interface():
 
                 if smart_mode:
                     # 使用智能预测模式
-                    smart_result = analyzer.predict_with_smart_mode(
-                        target_issue=target_issue,
-                        periods=analysis_periods,
-                        count=predict_count,
-                        method=method
-                    )
+                    try:
+                        smart_result = analyzer.predict_with_smart_mode(
+                            target_issue=target_issue,
+                            periods=analysis_periods,
+                            count=predict_count,
+                            method=method
+                        )
 
-                    # 显示智能预测结果
-                    display_smart_prediction_result(smart_result)
+                        # 显示智能预测结果
+                        display_smart_prediction_result(smart_result)
+                    except Exception as e:
+                        st.error(f"智能预测失败: {str(e)}")
+                        if show_explain:
+                            st.exception(e)
 
                     # 保存到历史记录
                     st.session_state.prediction_history.append({
@@ -565,15 +630,20 @@ def show_prediction_interface():
 
                 else:
                     # 传统预测模式
-                    prediction_result = analyzer.predict(
-                        target_issue=target_issue,
-                        periods=analysis_periods,
-                        count=predict_count,
-                        method=method
-                    )
+                    try:
+                        prediction_result = analyzer.predict(
+                            target_issue=target_issue,
+                            periods=analysis_periods,
+                            count=predict_count,
+                            method=method
+                        )
 
-                    # 显示结果
-                    display_prediction_result(prediction_result)
+                        # 显示结果
+                        display_prediction_result(prediction_result)
+                    except Exception as e:
+                        st.error(f"传统预测失败: {str(e)}")
+                        if show_explain:
+                            st.exception(e)
 
                     # 保存到历史记录
                     st.session_state.prediction_history.append({
@@ -843,6 +913,357 @@ def show_history_records():
                 )
                 st.plotly_chart(fig_hit_rates, use_container_width=True)
 
+def show_pair_frequency_analysis():
+    """显示数字对频率分析页面"""
+    st.header("🔢 数字对频率分析")
+    
+    # 页面说明
+    st.markdown("""
+    **功能说明：** 分析指定期号范围内两位数组合的出现频率，帮助识别历史数据中的数字组合模式。
+    
+    **使用方法：**
+    1. 输入目标期号（如2025238）
+    2. 选择统计期数（系统将从目标期号向前统计指定期数）
+    3. 点击"开始分析"查看结果
+    """)
+    
+    st.markdown("---")
+    
+    # 获取分析器
+    analyzer = get_analyzer()
+    if not analyzer:
+        st.error("系统未初始化，请先在数据管理页面加载数据")
+        return
+    
+    # 输入参数区域
+    col1, col2, col3 = st.columns([2, 2, 1])
+    
+    with col1:
+        target_issue = st.text_input(
+            "目标期号",
+            value="2025238",
+            help="输入7位期号，如2025238"
+        )
+    
+    with col2:
+        period_count = st.number_input(
+            "统计期数",
+            min_value=1,
+            max_value=100,
+            value=20,
+            help="从目标期号向前统计的期数"
+        )
+    
+    with col3:
+        use_cache = st.checkbox("使用缓存", value=True, help="启用缓存可提高重复查询的速度")
+    
+    # 高级选项
+    with st.expander("🔧 高级选项"):
+        col_adv1, col_adv2 = st.columns(2)
+        
+        with col_adv1:
+            show_top_n = st.number_input("显示前N个结果", min_value=5, max_value=50, value=20)
+            export_format = st.selectbox("导出格式", ["CSV", "Excel", "JSON"])
+        
+        with col_adv2:
+            min_frequency = st.slider("最小频率过滤(%)", 0.0, 100.0, 0.0, 0.1)
+            show_charts = st.checkbox("显示图表", value=True)
+    
+    # 分析按钮
+    if st.button("🚀 开始分析", type="primary"):
+        if not target_issue or len(target_issue) != 7 or not target_issue.isdigit():
+            st.error("请输入有效的7位期号，如2025238")
+            return
+        
+        try:
+            # 显示进度
+            with st.spinner("正在分析数字对频率..."):
+                # 执行分析
+                result = analyzer.analyze_pair_frequency(
+                    target_issue=target_issue,
+                    period_count=period_count,
+                    use_cache=use_cache
+                )
+            
+            # 显示分析结果
+            _display_pair_frequency_results(result, show_top_n, min_frequency, show_charts, export_format)
+            
+        except Exception as e:
+            st.error(f"分析失败: {str(e)}")
+    
+    # 批量分析功能
+    st.markdown("---")
+    st.subheader("📊 批量分析")
+    
+    col_batch1, col_batch2 = st.columns(2)
+    
+    with col_batch1:
+        st.markdown("**跨期数对比分析**")
+        if st.button("执行跨期数分析"):
+            if target_issue and len(target_issue) == 7 and target_issue.isdigit():
+                _show_cross_period_analysis(analyzer, target_issue)
+            else:
+                st.error("请先输入有效的目标期号")
+    
+    with col_batch2:
+        st.markdown("**一致高频数字对**")
+        if st.button("查找一致高频对"):
+            if target_issue and len(target_issue) == 7 and target_issue.isdigit():
+                _show_consistent_pairs_analysis(analyzer, target_issue)
+            else:
+                st.error("请先输入有效的目标期号")
+    
+    # 缓存管理
+    st.markdown("---")
+    st.subheader("💾 缓存管理")
+    
+    col_cache1, col_cache2, col_cache3 = st.columns(3)
+    
+    with col_cache1:
+        if st.button("查看缓存信息"):
+            cache_info = analyzer.get_pair_frequency_cache_info()
+            st.json(cache_info)
+    
+    with col_cache2:
+        if st.button("清空缓存"):
+            analyzer.clear_pair_frequency_cache()
+            st.success("缓存已清空")
+    
+    with col_cache3:
+        new_cache_size = st.number_input("调整缓存大小", min_value=10, max_value=500, value=100)
+        if st.button("应用缓存设置"):
+            analyzer.pair_frequency_analyzer.resize_cache(new_cache_size)
+            st.success(f"缓存大小已调整为 {new_cache_size}")
+
+
+def _display_pair_frequency_results(result: PairFrequencyResult, show_top_n: int, min_frequency: float, show_charts: bool, export_format: str):
+    """显示数字对频率分析结果"""
+    
+    # 基本信息
+    st.success("✅ 分析完成！")
+    
+    col_info1, col_info2, col_info3, col_info4 = st.columns(4)
+    
+    with col_info1:
+        st.metric("目标期号", result.target_issue)
+    
+    with col_info2:
+        st.metric("实际期数", f"{result.actual_periods}期")
+    
+    with col_info3:
+        st.metric("数字对总数", result.total_pairs)
+    
+    with col_info4:
+        st.metric("执行时间", f"{result.execution_time:.3f}秒")
+    
+    # 统计摘要
+    summary = result.get_summary()
+    
+    st.markdown("### 📈 统计摘要")
+    col_sum1, col_sum2, col_sum3, col_sum4 = st.columns(4)
+    
+    with col_sum1:
+        st.metric("不同数字对", summary['total_unique_pairs'])
+    
+    with col_sum2:
+        st.metric("最高频率", f"{summary['max_frequency']}次")
+    
+    with col_sum3:
+        st.metric("最低频率", f"{summary['min_frequency']}次")
+    
+    with col_sum4:
+        st.metric("平均频率", f"{summary['avg_frequency']:.1f}次")
+    
+    # 过滤结果
+    filtered_items = [
+        item for item in result.frequency_items 
+        if item.percentage >= min_frequency
+    ][:show_top_n]
+    
+    if not filtered_items:
+        st.warning("没有符合条件的数字对")
+        return
+    
+    # 结果表格
+    st.markdown("### 📋 分析结果")
+    
+    # 创建DataFrame
+    df_results = pd.DataFrame([
+        {
+            "排名": i + 1,
+            "数字对": f"({item.pair[0]:02d}, {item.pair[1]:02d})",
+            "数字1": item.pair[0],
+            "数字2": item.pair[1],
+            "出现次数": item.count,
+            "出现频率(%)": round(item.percentage, 1)
+        }
+        for i, item in enumerate(filtered_items)
+    ])
+    
+    # 显示表格
+    st.dataframe(
+        df_results,
+        use_container_width=True,
+        hide_index=True
+    )
+    
+    # 图表展示
+    if show_charts and len(filtered_items) > 0:
+        st.markdown("### 📊 可视化图表")
+        
+        # 频率分布柱状图
+        fig_bar = px.bar(
+            df_results.head(15),  # 只显示前15个
+            x="数字对",
+            y="出现次数",
+            title="数字对出现频率分布（前15名）",
+            color="出现频率(%)",
+            color_continuous_scale="viridis"
+        )
+        fig_bar.update_layout(xaxis_tickangle=-45)
+        st.plotly_chart(fig_bar, use_container_width=True)
+        
+        # 频率分布饼图（前10名）
+        if len(filtered_items) >= 5:
+            fig_pie = px.pie(
+                df_results.head(10),
+                values="出现次数",
+                names="数字对",
+                title="数字对频率占比（前10名）"
+            )
+            st.plotly_chart(fig_pie, use_container_width=True)
+    
+    # 导出功能
+    st.markdown("### 💾 导出结果")
+    
+    col_export1, col_export2 = st.columns(2)
+    
+    with col_export1:
+        # 生成导出数据
+        export_df = result.to_dataframe()
+        
+        if export_format == "CSV":
+            csv_data = export_df.to_csv(index=False)
+            st.download_button(
+                label="📥 下载CSV文件",
+                data=csv_data,
+                file_name=f"pair_frequency_{result.target_issue}_{result.actual_periods}periods.csv",
+                mime="text/csv"
+            )
+        elif export_format == "JSON":
+            json_data = json.dumps(result.to_dict(), ensure_ascii=False, indent=2)
+            st.download_button(
+                label="📥 下载JSON文件",
+                data=json_data,
+                file_name=f"pair_frequency_{result.target_issue}_{result.actual_periods}periods.json",
+                mime="application/json"
+            )
+    
+    with col_export2:
+        # 生成分析报告
+        report = result.generate_report()
+        st.download_button(
+            label="📄 下载分析报告",
+            data=report,
+            file_name=f"pair_frequency_report_{result.target_issue}_{result.actual_periods}periods.txt",
+            mime="text/plain"
+        )
+
+
+def _show_cross_period_analysis(analyzer: Happy8Analyzer, target_issue: str):
+    """显示跨期数对比分析"""
+    
+    with st.spinner("正在执行跨期数分析..."):
+        period_counts = [10, 20, 30, 50]
+        top_pairs_data = analyzer.get_top_pairs_across_periods(target_issue, period_counts, 10)
+    
+    st.markdown("#### 🔄 跨期数对比分析结果")
+    
+    # 创建对比表格
+    comparison_data = []
+    
+    for period in period_counts:
+        pairs_data = top_pairs_data.get(period, [])
+        for i, item in enumerate(pairs_data[:5]):  # 只显示前5个
+            comparison_data.append({
+                "期数": f"{period}期",
+                "排名": i + 1,
+                "数字对": f"({item.pair[0]:02d}, {item.pair[1]:02d})",
+                "出现次数": item.count,
+                "频率(%)": round(item.percentage, 1)
+            })
+    
+    if comparison_data:
+        df_comparison = pd.DataFrame(comparison_data)
+        
+        # 透视表显示
+        pivot_df = df_comparison.pivot_table(
+            index=["排名", "数字对"],
+            columns="期数",
+            values="频率(%)",
+            fill_value=0
+        )
+        
+        st.dataframe(pivot_df, use_container_width=True)
+        
+        # 趋势图
+        fig_trend = px.line(
+            df_comparison,
+            x="期数",
+            y="频率(%)",
+            color="数字对",
+            title="数字对频率趋势对比",
+            markers=True
+        )
+        st.plotly_chart(fig_trend, use_container_width=True)
+
+
+def _show_consistent_pairs_analysis(analyzer: Happy8Analyzer, target_issue: str):
+    """显示一致高频数字对分析"""
+    
+    with st.spinner("正在查找一致高频数字对..."):
+        period_counts = [10, 20, 30, 50]
+        consistent_pairs = analyzer.find_consistent_pairs(target_issue, period_counts, 30.0)
+    
+    st.markdown("#### 🎯 一致高频数字对分析结果")
+    
+    if consistent_pairs:
+        st.success(f"找到 {len(consistent_pairs)} 个一致高频数字对")
+        
+        # 显示一致高频数字对
+        consistent_df = pd.DataFrame([
+            {
+                "数字对": f"({pair[0]:02d}, {pair[1]:02d})",
+                "数字1": pair[0],
+                "数字2": pair[1]
+            }
+            for pair in consistent_pairs
+        ])
+        
+        st.dataframe(consistent_df, use_container_width=True, hide_index=True)
+        
+        # 详细分析每个一致数字对
+        if st.checkbox("显示详细分析"):
+            for pair in consistent_pairs[:5]:  # 只显示前5个
+                with st.expander(f"数字对 ({pair[0]:02d}, {pair[1]:02d}) 详细分析"):
+                    detail_data = []
+                    for period in period_counts:
+                        result = analyzer.analyze_pair_frequency(target_issue, period)
+                        pair_item = result.find_pair(pair[0], pair[1])
+                        if pair_item:
+                            detail_data.append({
+                                "期数": f"{period}期",
+                                "出现次数": pair_item.count,
+                                "频率(%)": round(pair_item.percentage, 1)
+                            })
+                    
+                    if detail_data:
+                        detail_df = pd.DataFrame(detail_data)
+                        st.dataframe(detail_df, use_container_width=True, hide_index=True)
+    else:
+        st.warning("未找到在所有期数下都保持高频的数字对")
+
+
 def show_system_settings():
     """显示系统设置"""
     st.header("⚙️ 系统设置")
@@ -900,6 +1321,7 @@ def main():
             "🏠 首页",
             "📊 数据管理",
             "🎯 智能预测",
+            "🔢 数字对分析",
             "📋 历史记录",
             "⚙️ 系统设置"
         ], index=0)
@@ -923,8 +1345,9 @@ def main():
         st.markdown("""
         1. **数据管理**: 爬取和验证历史数据
         2. **智能预测**: 执行各种预测算法
-        3. **历史记录**: 查看预测历史和统计
-        4. **系统设置**: 配置和维护系统
+        3. **数字对分析**: 分析数字对出现频率
+        4. **历史记录**: 查看预测历史和统计
+        5. **系统设置**: 配置和维护系统
         """)
     
     # 主内容区域
@@ -934,6 +1357,8 @@ def main():
         show_data_management()
     elif page == "🎯 智能预测":
         show_prediction_interface()
+    elif page == "🔢 数字对分析":
+        show_pair_frequency_analysis()
     elif page == "📋 历史记录":
         show_history_records()
     elif page == "⚙️ 系统设置":

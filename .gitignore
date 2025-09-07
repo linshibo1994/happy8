@@ -149,6 +149,9 @@ tmp/
 *.backup
 backup/
 
+# kiro
+./kiro
+
 # Model files (可选，如果模型文件很大)
 # *.h5
 # *.pkl

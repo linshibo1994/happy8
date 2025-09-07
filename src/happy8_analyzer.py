@@ -7,7 +7,7 @@ Happy8 Prediction System - Core Analyzer
 基于先进的机器学习和统计分析技术，专为快乐8彩票设计：
 - 号码范围: 1-80号
 - 开奖号码: 每期开出20个号码
-- 开奖频率: 每5分钟一期，每天约288期
+- 开奖频率: 每天一期
 - 17种预测算法: 统计学+机器学习+深度学习+贝叶斯推理
 
 作者: linshibo
@@ -96,7 +96,7 @@ except ImportError:
 @dataclass
 class Happy8Result:
     """快乐8开奖结果数据模型"""
-    issue: str                    # 期号 (如: "20250813001")
+    issue: str                    # 期号 (如: "2025238")
     date: str                     # 开奖日期 (如: "2025-08-13")
     time: str                     # 开奖时间 (如: "09:05:00")
     numbers: List[int]            # 开奖号码 (20个数字)
@@ -213,6 +213,802 @@ class ComparisonResult:
         """
 
 
+@dataclass
+class PairFrequencyItem:
+    """单个数字对频率项"""
+    pair: Tuple[int, int]         # 数字对 (如: (5, 15))
+    count: int                    # 出现次数
+    percentage: float             # 出现百分比
+    
+    def __post_init__(self):
+        """数据验证"""
+        if not isinstance(self.pair, tuple) or len(self.pair) != 2:
+            raise ValueError("数字对必须是包含两个整数的元组")
+        if not all(1 <= num <= 80 for num in self.pair):
+            raise ValueError("数字对中的数字必须在1-80范围内")
+        if self.pair[0] >= self.pair[1]:
+            raise ValueError("数字对中第一个数字必须小于第二个数字")
+        if self.count < 0:
+            raise ValueError("出现次数不能为负数")
+        if not 0 <= self.percentage <= 100:
+            raise ValueError("百分比必须在0-100范围内")
+    
+    def __str__(self) -> str:
+        """字符串表示"""
+        return f"({self.pair[0]:02d}, {self.pair[1]:02d}) - 出现 {self.count} 次 - 概率 {self.percentage:.1f}%"
+    
+    def __repr__(self) -> str:
+        """调试表示"""
+        return f"PairFrequencyItem(pair={self.pair}, count={self.count}, percentage={self.percentage:.1f})"
+
+
+@dataclass
+class PairFrequencyResult:
+    """数字对频率分析结果"""
+    target_issue: str                    # 目标期号
+    requested_periods: int               # 请求的统计期数
+    actual_periods: int                  # 实际统计期数
+    start_issue: str                     # 起始期号
+    end_issue: str                       # 结束期号
+    total_pairs: int                     # 分析的数字对总数
+    frequency_items: List[PairFrequencyItem]  # 频率项列表
+    analysis_time: datetime              # 分析时间
+    execution_time: float                # 执行耗时(秒)
+    
+    def __post_init__(self):
+        """数据验证"""
+        if self.requested_periods <= 0:
+            raise ValueError("请求期数必须大于0")
+        if self.actual_periods < 0:
+            raise ValueError("实际期数不能为负数")
+        if self.actual_periods > self.requested_periods:
+            raise ValueError("实际期数不能大于请求期数")
+        if self.total_pairs < 0:
+            raise ValueError("数字对总数不能为负数")
+        if self.execution_time < 0:
+            raise ValueError("执行时间不能为负数")
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """转换为字典格式"""
+        return {
+            'target_issue': self.target_issue,
+            'requested_periods': self.requested_periods,
+            'actual_periods': self.actual_periods,
+            'start_issue': self.start_issue,
+            'end_issue': self.end_issue,
+            'total_pairs': self.total_pairs,
+            'analysis_time': self.analysis_time.isoformat(),
+            'execution_time': self.execution_time,
+            'frequency_items': [
+                {
+                    'pair': item.pair,
+                    'count': item.count,
+                    'percentage': item.percentage
+                }
+                for item in self.frequency_items
+            ]
+        }
+    
+    def to_dataframe(self) -> pd.DataFrame:
+        """转换为DataFrame格式，便于导出"""
+        data = []
+        for item in self.frequency_items:
+            data.append({
+                '数字1': item.pair[0],
+                '数字2': item.pair[1],
+                '数字对': f"({item.pair[0]:02d}, {item.pair[1]:02d})",
+                '出现次数': item.count,
+                '出现频率(%)': round(item.percentage, 2)
+            })
+        
+        df = pd.DataFrame(data)
+        
+        # 添加元数据作为DataFrame属性
+        df.attrs = {
+            'target_issue': self.target_issue,
+            'requested_periods': self.requested_periods,
+            'actual_periods': self.actual_periods,
+            'start_issue': self.start_issue,
+            'end_issue': self.end_issue,
+            'total_pairs': self.total_pairs,
+            'analysis_time': self.analysis_time.isoformat(),
+            'execution_time': self.execution_time
+        }
+        
+        return df
+    
+    def get_summary(self) -> Dict[str, Any]:
+        """获取统计摘要"""
+        if not self.frequency_items:
+            return {
+                'total_unique_pairs': 0,
+                'max_frequency': 0,
+                'min_frequency': 0,
+                'avg_frequency': 0,
+                'top_pairs': []
+            }
+        
+        frequencies = [item.count for item in self.frequency_items]
+        
+        return {
+            'total_unique_pairs': len(self.frequency_items),
+            'max_frequency': max(frequencies),
+            'min_frequency': min(frequencies),
+            'avg_frequency': sum(frequencies) / len(frequencies),
+            'top_pairs': [
+                {
+                    'pair': item.pair,
+                    'count': item.count,
+                    'percentage': item.percentage
+                }
+                for item in self.frequency_items[:10]  # 前10个最高频率的数字对
+            ]
+        }
+    
+    def get_top_pairs(self, n: int = 10) -> List[PairFrequencyItem]:
+        """获取前N个最高频率的数字对"""
+        return self.frequency_items[:min(n, len(self.frequency_items))]
+    
+    def find_pair(self, num1: int, num2: int) -> Optional['PairFrequencyItem']:
+        """查找特定数字对的频率信息"""
+        # 确保数字对的顺序正确（小数在前）
+        pair = (min(num1, num2), max(num1, num2))
+        
+        for item in self.frequency_items:
+            if item.pair == pair:
+                return item
+        return None
+    
+    def generate_report(self) -> str:
+        """生成分析报告"""
+        summary = self.get_summary()
+        
+        report = f"""
+数字对频率分析报告
+==================
+目标期号: {self.target_issue}
+统计范围: {self.start_issue} - {self.end_issue} (共{self.actual_periods}期)
+请求期数: {self.requested_periods}期
+实际期数: {self.actual_periods}期
+分析时间: {self.analysis_time.strftime('%Y-%m-%d %H:%M:%S')}
+执行耗时: {self.execution_time:.3f}秒
+
+统计摘要:
+- 不同数字对总数: {summary['total_unique_pairs']}
+- 最高出现频率: {summary['max_frequency']}次
+- 最低出现频率: {summary['min_frequency']}次
+- 平均出现频率: {summary['avg_frequency']:.2f}次
+
+前10个高频数字对:
+"""
+        
+        for i, item in enumerate(self.get_top_pairs(10), 1):
+            report += f"{i:2d}. {item}\n"
+        
+        return report
+    
+    def to_excel(self, filename: Optional[str] = None) -> bytes:
+        """
+        导出为Excel格式
+        
+        Args:
+            filename: 文件名，如果为None则返回字节数据
+            
+        Returns:
+            Excel文件的字节数据
+        """
+        import io
+        
+        # 创建Excel writer
+        output = io.BytesIO()
+        
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            # 主要数据表
+            df_main = self.to_dataframe()
+            df_main.to_excel(writer, sheet_name='数字对频率', index=False)
+            
+            # 统计摘要表
+            summary = self.get_summary()
+            df_summary = pd.DataFrame([
+                {'项目': '目标期号', '值': self.target_issue},
+                {'项目': '统计范围', '值': f"{self.start_issue} - {self.end_issue}"},
+                {'项目': '实际期数', '值': self.actual_periods},
+                {'项目': '数字对总数', '值': self.total_pairs},
+                {'项目': '最高频率', '值': f"{summary['max_frequency']}次"},
+                {'项目': '最低频率', '值': f"{summary['min_frequency']}次"},
+                {'项目': '平均频率', '值': f"{summary['avg_frequency']:.2f}次"},
+                {'项目': '执行时间', '值': f"{self.execution_time:.3f}秒"},
+            ])
+            df_summary.to_excel(writer, sheet_name='统计摘要', index=False)
+            
+            # 前20名数字对
+            df_top20 = pd.DataFrame([
+                {
+                    '排名': i + 1,
+                    '数字对': f"({item.pair[0]:02d}, {item.pair[1]:02d})",
+                    '出现次数': item.count,
+                    '出现频率(%)': round(item.percentage, 2)
+                }
+                for i, item in enumerate(self.get_top_pairs(20))
+            ])
+            df_top20.to_excel(writer, sheet_name='前20名', index=False)
+        
+        excel_data = output.getvalue()
+        
+        # 如果指定了文件名，保存到文件
+        if filename:
+            with open(filename, 'wb') as f:
+                f.write(excel_data)
+        
+        return excel_data
+    
+    def to_html(self, include_charts: bool = False) -> str:
+        """
+        导出为HTML格式
+        
+        Args:
+            include_charts: 是否包含图表
+            
+        Returns:
+            HTML字符串
+        """
+        summary = self.get_summary()
+        
+        html = f"""
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>数字对频率分析报告</title>
+    <style>
+        body {{ font-family: Arial, sans-serif; margin: 20px; }}
+        .header {{ background-color: #f0f0f0; padding: 20px; border-radius: 5px; }}
+        .summary {{ margin: 20px 0; }}
+        .summary-item {{ display: inline-block; margin: 10px; padding: 10px; background-color: #e8f4f8; border-radius: 3px; }}
+        table {{ border-collapse: collapse; width: 100%; margin: 20px 0; }}
+        th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
+        th {{ background-color: #f2f2f2; }}
+        .top-pair {{ background-color: #fff3cd; }}
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🔢 数字对频率分析报告</h1>
+        <p><strong>目标期号:</strong> {self.target_issue}</p>
+        <p><strong>统计范围:</strong> {self.start_issue} - {self.end_issue} (共{self.actual_periods}期)</p>
+        <p><strong>分析时间:</strong> {self.analysis_time.strftime('%Y-%m-%d %H:%M:%S')}</p>
+        <p><strong>执行耗时:</strong> {self.execution_time:.3f}秒</p>
+    </div>
+    
+    <div class="summary">
+        <h2>📈 统计摘要</h2>
+        <div class="summary-item">
+            <strong>不同数字对总数:</strong> {summary['total_unique_pairs']}
+        </div>
+        <div class="summary-item">
+            <strong>最高出现频率:</strong> {summary['max_frequency']}次
+        </div>
+        <div class="summary-item">
+            <strong>最低出现频率:</strong> {summary['min_frequency']}次
+        </div>
+        <div class="summary-item">
+            <strong>平均出现频率:</strong> {summary['avg_frequency']:.2f}次
+        </div>
+    </div>
+    
+    <h2>📋 详细结果</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>排名</th>
+                <th>数字对</th>
+                <th>数字1</th>
+                <th>数字2</th>
+                <th>出现次数</th>
+                <th>出现频率(%)</th>
+            </tr>
+        </thead>
+        <tbody>
+"""
+        
+        # 添加数据行
+        for i, item in enumerate(self.frequency_items[:50]):  # 只显示前50个
+            row_class = "top-pair" if i < 10 else ""
+            html += f"""
+            <tr class="{row_class}">
+                <td>{i + 1}</td>
+                <td>({item.pair[0]:02d}, {item.pair[1]:02d})</td>
+                <td>{item.pair[0]}</td>
+                <td>{item.pair[1]}</td>
+                <td>{item.count}</td>
+                <td>{item.percentage:.1f}%</td>
+            </tr>
+"""
+        
+        html += """
+        </tbody>
+    </table>
+    
+    <div style="margin-top: 40px; padding: 20px; background-color: #f8f9fa; border-radius: 5px;">
+        <p><small>报告生成时间: """ + datetime.now().strftime('%Y-%m-%d %H:%M:%S') + """</small></p>
+        <p><small>快乐8智能预测系统 - 数字对频率分析模块</small></p>
+    </div>
+</body>
+</html>
+"""
+        
+        return html
+    
+    def to_xml(self) -> str:
+        """
+        导出为XML格式
+        
+        Returns:
+            XML字符串
+        """
+        from xml.etree.ElementTree import Element, SubElement, tostring
+        from xml.dom import minidom
+        
+        # 创建根元素
+        root = Element('PairFrequencyAnalysis')
+        
+        # 基本信息
+        info = SubElement(root, 'AnalysisInfo')
+        SubElement(info, 'TargetIssue').text = self.target_issue
+        SubElement(info, 'RequestedPeriods').text = str(self.requested_periods)
+        SubElement(info, 'ActualPeriods').text = str(self.actual_periods)
+        SubElement(info, 'StartIssue').text = self.start_issue
+        SubElement(info, 'EndIssue').text = self.end_issue
+        SubElement(info, 'TotalPairs').text = str(self.total_pairs)
+        SubElement(info, 'AnalysisTime').text = self.analysis_time.isoformat()
+        SubElement(info, 'ExecutionTime').text = str(self.execution_time)
+        
+        # 统计摘要
+        summary = self.get_summary()
+        summary_elem = SubElement(root, 'Summary')
+        SubElement(summary_elem, 'TotalUniquePairs').text = str(summary['total_unique_pairs'])
+        SubElement(summary_elem, 'MaxFrequency').text = str(summary['max_frequency'])
+        SubElement(summary_elem, 'MinFrequency').text = str(summary['min_frequency'])
+        SubElement(summary_elem, 'AvgFrequency').text = str(summary['avg_frequency'])
+        
+        # 频率项
+        items_elem = SubElement(root, 'FrequencyItems')
+        for item in self.frequency_items:
+            item_elem = SubElement(items_elem, 'Item')
+            SubElement(item_elem, 'Number1').text = str(item.pair[0])
+            SubElement(item_elem, 'Number2').text = str(item.pair[1])
+            SubElement(item_elem, 'Count').text = str(item.count)
+            SubElement(item_elem, 'Percentage').text = str(item.percentage)
+        
+        # 格式化XML
+        rough_string = tostring(root, 'utf-8')
+        reparsed = minidom.parseString(rough_string)
+        return reparsed.toprettyxml(indent="  ")
+    
+    def export_to_file(self, filepath: str, format_type: str = 'auto') -> bool:
+        """
+        导出到文件
+        
+        Args:
+            filepath: 文件路径
+            format_type: 格式类型 ('auto', 'csv', 'excel', 'json', 'html', 'xml', 'txt')
+            
+        Returns:
+            是否成功导出
+        """
+        try:
+            # 自动检测格式
+            if format_type == 'auto':
+                ext = filepath.lower().split('.')[-1]
+                format_map = {
+                    'csv': 'csv',
+                    'xlsx': 'excel',
+                    'xls': 'excel',
+                    'json': 'json',
+                    'html': 'html',
+                    'htm': 'html',
+                    'xml': 'xml',
+                    'txt': 'txt'
+                }
+                format_type = format_map.get(ext, 'csv')
+            
+            # 根据格式导出
+            if format_type == 'csv':
+                df = self.to_dataframe()
+                df.to_csv(filepath, index=False, encoding='utf-8-sig')
+            
+            elif format_type == 'excel':
+                excel_data = self.to_excel()
+                with open(filepath, 'wb') as f:
+                    f.write(excel_data)
+            
+            elif format_type == 'json':
+                import json
+                data = self.to_dict()
+                with open(filepath, 'w', encoding='utf-8') as f:
+                    json.dump(data, f, ensure_ascii=False, indent=2)
+            
+            elif format_type == 'html':
+                html_content = self.to_html()
+                with open(filepath, 'w', encoding='utf-8') as f:
+                    f.write(html_content)
+            
+            elif format_type == 'xml':
+                xml_content = self.to_xml()
+                with open(filepath, 'w', encoding='utf-8') as f:
+                    f.write(xml_content)
+            
+            elif format_type == 'txt':
+                report = self.generate_report()
+                with open(filepath, 'w', encoding='utf-8') as f:
+                    f.write(report)
+            
+            else:
+                raise ValueError(f"不支持的格式: {format_type}")
+            
+            return True
+            
+        except Exception as e:
+            print(f"导出失败: {str(e)}")
+            return False
+
+
+# 数字对分析工具函数
+def extract_number_pairs(numbers: List[int]) -> List[Tuple[int, int]]:
+    """
+    从20个开奖号码中提取所有两位数组合
+    
+    Args:
+        numbers: 开奖号码列表，应包含20个1-80范围内的数字
+        
+    Returns:
+        所有可能的数字对组合列表，每个数字对按(小数, 大数)格式排序
+        
+    Raises:
+        ValueError: 当输入数据无效时
+        
+    Example:
+        >>> extract_number_pairs([1, 2, 3, 4, 5])
+        [(1, 2), (1, 3), (1, 4), (1, 5), (2, 3), (2, 4), (2, 5), (3, 4), (3, 5), (4, 5)]
+    """
+    # 输入验证
+    if not isinstance(numbers, (list, tuple)):
+        raise ValueError("输入必须是列表或元组")
+    
+    if len(numbers) != 20:
+        raise ValueError(f"开奖号码必须是20个，实际: {len(numbers)}")
+    
+    if not all(isinstance(num, int) for num in numbers):
+        raise ValueError("所有号码必须是整数")
+    
+    if not all(1 <= num <= 80 for num in numbers):
+        raise ValueError("所有号码必须在1-80范围内")
+    
+    if len(set(numbers)) != 20:
+        raise ValueError("开奖号码不能重复")
+    
+    # 提取所有两位数组合
+    pairs = []
+    for i in range(len(numbers)):
+        for j in range(i + 1, len(numbers)):
+            # 确保较小的数字在前
+            num1, num2 = numbers[i], numbers[j]
+            pair = (min(num1, num2), max(num1, num2))
+            pairs.append(pair)
+    
+    # 按数字对排序（先按第一个数字，再按第二个数字）
+    pairs.sort()
+    
+    return pairs
+
+
+def validate_issue_format(issue: str) -> bool:
+    """
+    验证期号格式是否正确
+    
+    Args:
+        issue: 期号字符串，格式应为YYYYNNN（如2025238）
+        
+    Returns:
+        bool: 格式是否正确
+        
+    Example:
+        >>> validate_issue_format("2025238")
+        True
+        >>> validate_issue_format("25091")
+        False
+    """
+    if not isinstance(issue, str):
+        return False
+    
+    if len(issue) != 7:
+        return False
+    
+    if not issue.isdigit():
+        return False
+    
+    year = int(issue[:4])
+    period = int(issue[4:])
+    
+    # 年份应该在合理范围内
+    if not (2020 <= year <= 2030):
+        return False
+    
+    # 期数应该在合理范围内（每天最多300期左右）
+    if not (1 <= period <= 999):
+        return False
+    
+    return True
+
+
+def calculate_issue_range(target_issue: str, period_count: int, available_data: Optional[pd.DataFrame] = None) -> Tuple[str, str, int]:
+    """
+    从目标期号向前计算指定期数的范围，基于实际可用数据
+    
+    Args:
+        target_issue: 目标期号（如"2025238"）
+        period_count: 要统计的期数
+        available_data: 可用的历史数据DataFrame，如果提供则基于实际数据计算
+        
+    Returns:
+        Tuple[start_issue, end_issue, actual_count]: 起始期号、结束期号、实际期数
+        
+    Raises:
+        ValueError: 当输入参数无效时
+        
+    Example:
+        >>> calculate_issue_range("2025238", 20)
+        ("2025219", "2025238", 20)
+    """
+    # 输入验证
+    if not validate_issue_format(target_issue):
+        raise ValueError(f"无效的期号格式: {target_issue}")
+    
+    if not isinstance(period_count, int) or period_count <= 0:
+        raise ValueError(f"期数必须是正整数: {period_count}")
+    
+    if period_count > 100:
+        raise ValueError(f"期数不能超过100: {period_count}")
+    
+    # 如果提供了实际数据，基于数据计算
+    if available_data is not None and not available_data.empty:
+        return _calculate_range_from_data(target_issue, period_count, available_data)
+    
+    # 否则使用简单的数学计算
+    return _calculate_range_simple(target_issue, period_count)
+
+
+def _calculate_range_from_data(target_issue: str, period_count: int, data: pd.DataFrame) -> Tuple[str, str, int]:
+    """
+    基于实际数据计算期号范围
+    """
+    # 确保数据按期号排序
+    data_sorted = data.sort_values('issue')
+    issues = data_sorted['issue'].tolist()
+    
+    # 检查目标期号是否存在
+    if target_issue not in issues:
+        raise ValueError(f"目标期号 {target_issue} 不存在于历史数据中")
+    
+    # 找到目标期号的位置
+    target_index = issues.index(target_issue)
+    
+    # 计算起始位置
+    start_index = max(0, target_index - period_count + 1)
+    
+    # 获取实际的期号范围
+    start_issue = issues[start_index]
+    end_issue = target_issue
+    actual_count = target_index - start_index + 1
+    
+    return start_issue, end_issue, actual_count
+
+
+def _calculate_range_simple(target_issue: str, period_count: int) -> Tuple[str, str, int]:
+    """
+    简单的数学计算期号范围（不依赖实际数据）
+    """
+    # 解析目标期号
+    year = int(target_issue[:4])
+    target_period = int(target_issue[4:])
+    
+    # 计算起始期号
+    start_period = target_period - (period_count - 1)
+    
+    # 处理跨年情况（简化处理，假设每年期号连续）
+    if start_period <= 0:
+        # 如果起始期号小于等于0，则从第1期开始
+        start_period = 1
+        actual_count = target_period
+    else:
+        actual_count = period_count
+    
+    # 格式化期号
+    start_issue = f"{year}{start_period:03d}"
+    end_issue = target_issue
+    
+    return start_issue, end_issue, actual_count
+
+
+def get_available_issues_in_range(start_issue: str, end_issue: str, data: pd.DataFrame) -> List[str]:
+    """
+    获取指定范围内实际可用的期号列表
+    
+    Args:
+        start_issue: 起始期号
+        end_issue: 结束期号
+        data: 历史数据DataFrame
+        
+    Returns:
+        在指定范围内的期号列表，按时间顺序排序
+    """
+    if data.empty:
+        return []
+    
+    # 筛选范围内的数据
+    mask = (data['issue'] >= start_issue) & (data['issue'] <= end_issue)
+    filtered_data = data[mask]
+    
+    # 按期号排序并返回期号列表
+    return sorted(filtered_data['issue'].tolist())
+
+
+def count_pair_frequencies(data: pd.DataFrame, start_issue: str, end_issue: str) -> Dict[Tuple[int, int], int]:
+    """
+    统计指定期号范围内数字对的出现频率
+    
+    Args:
+        data: 历史开奖数据DataFrame
+        start_issue: 起始期号
+        end_issue: 结束期号
+        
+    Returns:
+        数字对出现频率字典，键为(num1, num2)，值为出现次数
+        
+    Raises:
+        ValueError: 当输入数据无效时
+        
+    Example:
+        >>> data = pd.DataFrame({...})
+        >>> frequencies = count_pair_frequencies(data, "2025210", "2025220")
+        >>> frequencies[(5, 15)]
+        12
+    """
+    # 输入验证
+    if data.empty:
+        return {}
+    
+    required_cols = ['issue'] + [f'num{i}' for i in range(1, 21)]
+    missing_cols = [col for col in required_cols if col not in data.columns]
+    if missing_cols:
+        raise ValueError(f"数据缺少必要列: {missing_cols}")
+    
+    # 筛选指定范围的数据
+    mask = (data['issue'] >= start_issue) & (data['issue'] <= end_issue)
+    filtered_data = data[mask]
+    
+    if filtered_data.empty:
+        return {}
+    
+    # 统计数字对频率
+    pair_counts = {}
+    
+    for _, row in filtered_data.iterrows():
+        # 提取当期的20个开奖号码
+        numbers = [int(row[f'num{i}']) for i in range(1, 21)]
+        
+        # 验证号码有效性
+        if len(set(numbers)) != 20:
+            continue  # 跳过有重复号码的无效数据
+        
+        if not all(1 <= num <= 80 for num in numbers):
+            continue  # 跳过号码范围无效的数据
+        
+        # 提取所有数字对
+        try:
+            pairs = extract_number_pairs(numbers)
+            
+            # 统计每个数字对的出现次数
+            for pair in pairs:
+                pair_counts[pair] = pair_counts.get(pair, 0) + 1
+                
+        except ValueError:
+            # 跳过无效的号码组合
+            continue
+    
+    return pair_counts
+
+
+def sort_pair_frequencies(pair_counts: Dict[Tuple[int, int], int], total_periods: int) -> List[PairFrequencyItem]:
+    """
+    对数字对频率进行排序并转换为PairFrequencyItem列表
+    
+    Args:
+        pair_counts: 数字对出现次数字典
+        total_periods: 总期数，用于计算百分比
+        
+    Returns:
+        按出现频率从高到低排序的PairFrequencyItem列表
+        
+    Example:
+        >>> pair_counts = {(5, 15): 12, (4, 18): 10}
+        >>> items = sort_pair_frequencies(pair_counts, 20)
+        >>> items[0].pair
+        (5, 15)
+    """
+    if not pair_counts or total_periods <= 0:
+        return []
+    
+    # 转换为PairFrequencyItem列表
+    frequency_items = []
+    for pair, count in pair_counts.items():
+        percentage = (count / total_periods) * 100
+        item = PairFrequencyItem(
+            pair=pair,
+            count=count,
+            percentage=percentage
+        )
+        frequency_items.append(item)
+    
+    # 按出现次数降序排序，次数相同时按数字对升序排序
+    frequency_items.sort(key=lambda x: (-x.count, x.pair))
+    
+    return frequency_items
+
+
+def analyze_pair_frequency_core(data: pd.DataFrame, target_issue: str, period_count: int) -> PairFrequencyResult:
+    """
+    数字对频率分析的核心算法
+    
+    Args:
+        data: 历史开奖数据DataFrame
+        target_issue: 目标期号
+        period_count: 统计期数
+        
+    Returns:
+        完整的分析结果
+        
+    Raises:
+        ValueError: 当输入参数无效时
+    """
+    start_time = datetime.now()
+    
+    try:
+        # 计算期号范围
+        start_issue, end_issue, actual_periods = calculate_issue_range(
+            target_issue, period_count, data
+        )
+        
+        # 统计数字对频率
+        pair_counts = count_pair_frequencies(data, start_issue, end_issue)
+        
+        # 排序和格式化结果
+        frequency_items = sort_pair_frequencies(pair_counts, actual_periods)
+        
+        # 计算执行时间
+        execution_time = (datetime.now() - start_time).total_seconds()
+        
+        # 创建结果对象
+        result = PairFrequencyResult(
+            target_issue=target_issue,
+            requested_periods=period_count,
+            actual_periods=actual_periods,
+            start_issue=start_issue,
+            end_issue=end_issue,
+            total_pairs=len(frequency_items),
+            frequency_items=frequency_items,
+            analysis_time=start_time,
+            execution_time=execution_time
+        )
+        
+        return result
+        
+    except Exception as e:
+        execution_time = (datetime.now() - start_time).total_seconds()
+        raise ValueError(f"分析过程中发生错误: {str(e)}，执行时间: {execution_time:.3f}秒")
+
+
 class DataValidator:
     """数据验证器"""
     
@@ -257,6 +1053,773 @@ class DataValidator:
                 results['invalid_number_counts'] += 1
         
         return results
+
+
+class ResultCache:
+    """
+    结果缓存管理器 - 支持LRU策略和缓存统计
+    """
+    
+    def __init__(self, max_size: int = 100):
+        """
+        初始化缓存管理器
+        
+        Args:
+            max_size: 最大缓存条目数
+        """
+        self.max_size = max_size
+        self.cache = {}  # 缓存数据
+        self.access_order = []  # 访问顺序，用于LRU
+        self.hit_count = 0  # 缓存命中次数
+        self.miss_count = 0  # 缓存未命中次数
+        self.creation_time = datetime.now()
+    
+    def get(self, key: str) -> Optional[PairFrequencyResult]:
+        """
+        获取缓存结果
+        
+        Args:
+            key: 缓存键
+            
+        Returns:
+            缓存的结果，如果不存在则返回None
+        """
+        if key in self.cache:
+            # 更新访问顺序
+            self.access_order.remove(key)
+            self.access_order.append(key)
+            self.hit_count += 1
+            return self.cache[key]
+        else:
+            self.miss_count += 1
+            return None
+    
+    def set(self, key: str, result: PairFrequencyResult):
+        """
+        设置缓存结果
+        
+        Args:
+            key: 缓存键
+            result: 分析结果
+        """
+        # 如果键已存在，更新并调整顺序
+        if key in self.cache:
+            self.access_order.remove(key)
+        # 如果缓存已满，删除最久未使用的条目
+        elif len(self.cache) >= self.max_size:
+            oldest_key = self.access_order.pop(0)
+            del self.cache[oldest_key]
+        
+        # 添加新条目
+        self.cache[key] = result
+        self.access_order.append(key)
+    
+    def clear(self):
+        """清空缓存"""
+        self.cache.clear()
+        self.access_order.clear()
+        self.hit_count = 0
+        self.miss_count = 0
+    
+    def get_stats(self) -> Dict[str, Any]:
+        """获取缓存统计信息"""
+        total_requests = self.hit_count + self.miss_count
+        hit_rate = (self.hit_count / total_requests * 100) if total_requests > 0 else 0
+        
+        return {
+            'cache_size': len(self.cache),
+            'max_size': self.max_size,
+            'hit_count': self.hit_count,
+            'miss_count': self.miss_count,
+            'hit_rate': round(hit_rate, 2),
+            'total_requests': total_requests,
+            'cached_keys': list(self.cache.keys()),
+            'creation_time': self.creation_time.isoformat(),
+            'uptime_seconds': (datetime.now() - self.creation_time).total_seconds()
+        }
+    
+    def remove(self, key: str) -> bool:
+        """
+        删除指定的缓存条目
+        
+        Args:
+            key: 缓存键
+            
+        Returns:
+            是否成功删除
+        """
+        if key in self.cache:
+            del self.cache[key]
+            self.access_order.remove(key)
+            return True
+        return False
+    
+    def resize(self, new_max_size: int):
+        """
+        调整缓存大小
+        
+        Args:
+            new_max_size: 新的最大缓存大小
+        """
+        self.max_size = new_max_size
+        
+        # 如果新大小小于当前缓存数量，删除最久未使用的条目
+        while len(self.cache) > self.max_size:
+            oldest_key = self.access_order.pop(0)
+            del self.cache[oldest_key]
+
+
+class PairAnalysisPerformanceMonitor:
+    """
+    性能监控器 - 专门用于数字对频率分析
+    """
+    
+    def __init__(self):
+        """初始化性能监控器"""
+        self.metrics = {
+            'total_analyses': 0,
+            'total_execution_time': 0.0,
+            'cache_hits': 0,
+            'cache_misses': 0,
+            'avg_execution_time': 0.0,
+            'max_execution_time': 0.0,
+            'min_execution_time': float('inf'),
+            'memory_usage_mb': 0.0,
+            'start_time': datetime.now()
+        }
+        self.analysis_history = []  # 保存最近100次分析的详细信息
+        self.max_history = 100
+    
+    def record_analysis(self, execution_time: float, cache_hit: bool, data_size: int, result_size: int):
+        """
+        记录一次分析的性能数据
+        
+        Args:
+            execution_time: 执行时间（秒）
+            cache_hit: 是否命中缓存
+            data_size: 处理的数据大小
+            result_size: 结果数据大小
+        """
+        # 更新基本指标
+        self.metrics['total_analyses'] += 1
+        self.metrics['total_execution_time'] += execution_time
+        
+        if cache_hit:
+            self.metrics['cache_hits'] += 1
+        else:
+            self.metrics['cache_misses'] += 1
+        
+        # 更新执行时间统计
+        self.metrics['avg_execution_time'] = (
+            self.metrics['total_execution_time'] / self.metrics['total_analyses']
+        )
+        self.metrics['max_execution_time'] = max(
+            self.metrics['max_execution_time'], execution_time
+        )
+        self.metrics['min_execution_time'] = min(
+            self.metrics['min_execution_time'], execution_time
+        )
+        
+        # 记录详细历史
+        analysis_record = {
+            'timestamp': datetime.now(),
+            'execution_time': execution_time,
+            'cache_hit': cache_hit,
+            'data_size': data_size,
+            'result_size': result_size
+        }
+        
+        self.analysis_history.append(analysis_record)
+        
+        # 保持历史记录在限制范围内
+        if len(self.analysis_history) > self.max_history:
+            self.analysis_history.pop(0)
+        
+        # 更新内存使用情况
+        self._update_memory_usage()
+    
+    def _update_memory_usage(self):
+        """更新内存使用情况"""
+        try:
+            import psutil
+            process = psutil.Process()
+            self.metrics['memory_usage_mb'] = process.memory_info().rss / 1024 / 1024
+        except ImportError:
+            # 如果没有psutil，使用简单的估算
+            import sys
+            self.metrics['memory_usage_mb'] = sys.getsizeof(self.analysis_history) / 1024 / 1024
+    
+    def get_performance_report(self) -> Dict[str, Any]:
+        """获取性能报告"""
+        cache_hit_rate = 0.0
+        if self.metrics['total_analyses'] > 0:
+            cache_hit_rate = (self.metrics['cache_hits'] / self.metrics['total_analyses']) * 100
+        
+        uptime = (datetime.now() - self.metrics['start_time']).total_seconds()
+        
+        return {
+            'total_analyses': self.metrics['total_analyses'],
+            'total_execution_time': round(self.metrics['total_execution_time'], 3),
+            'avg_execution_time': round(self.metrics['avg_execution_time'], 3),
+            'max_execution_time': round(self.metrics['max_execution_time'], 3),
+            'min_execution_time': round(self.metrics['min_execution_time'], 3) if self.metrics['min_execution_time'] != float('inf') else 0.0,
+            'cache_hit_rate': round(cache_hit_rate, 2),
+            'cache_hits': self.metrics['cache_hits'],
+            'cache_misses': self.metrics['cache_misses'],
+            'memory_usage_mb': round(self.metrics['memory_usage_mb'], 2),
+            'uptime_seconds': round(uptime, 1),
+            'analyses_per_minute': round((self.metrics['total_analyses'] / uptime * 60), 2) if uptime > 0 else 0.0
+        }
+    
+    def get_recent_performance_trend(self, last_n: int = 20) -> List[Dict[str, Any]]:
+        """获取最近N次分析的性能趋势"""
+        recent_history = self.analysis_history[-last_n:] if len(self.analysis_history) >= last_n else self.analysis_history
+        
+        return [
+            {
+                'timestamp': record['timestamp'].isoformat(),
+                'execution_time': record['execution_time'],
+                'cache_hit': record['cache_hit'],
+                'data_size': record['data_size'],
+                'result_size': record['result_size']
+            }
+            for record in recent_history
+        ]
+    
+    def reset_metrics(self):
+        """重置性能指标"""
+        self.__init__()
+
+
+class PairFrequencyAnalyzer:
+    """
+    数字对频率分析器
+    
+    提供完整的数字对频率分析功能，包括：
+    - 数字对提取和统计
+    - 期号范围计算
+    - 频率分析和排序
+    - 结果缓存和性能优化
+    - 性能监控和优化
+    """
+    
+    def __init__(self, data_manager=None, cache_size: int = 100, enable_parallel: bool = True):
+        """
+        初始化分析器
+        
+        Args:
+            data_manager: 数据管理器实例，如果为None则创建新实例
+            cache_size: 缓存大小
+            enable_parallel: 是否启用并行处理
+        """
+        self.data_manager = data_manager
+        self.cache = ResultCache(cache_size)  # 使用高级缓存管理器
+        self.performance_monitor = PairAnalysisPerformanceMonitor()  # 性能监控器
+        self.enable_parallel = enable_parallel
+        self.max_workers = min(4, os.cpu_count() or 1)  # 最大工作线程数
+        self.logger = self._setup_logger()
+    
+    def _setup_logger(self):
+        """设置日志记录器"""
+        import logging
+        logger = logging.getLogger(f"{__name__}.PairFrequencyAnalyzer")
+        if not logger.handlers:
+            handler = logging.StreamHandler()
+            formatter = logging.Formatter(
+                '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+            )
+            handler.setFormatter(formatter)
+            logger.addHandler(handler)
+            logger.setLevel(logging.INFO)
+        return logger
+    
+    def analyze_pair_frequency(
+        self, 
+        target_issue: str, 
+        period_count: int,
+        use_cache: bool = True
+    ) -> PairFrequencyResult:
+        """
+        分析数字对频率的主要方法
+        
+        Args:
+            target_issue: 目标期号（如"2025238"）
+            period_count: 统计期数
+            use_cache: 是否使用缓存
+            
+        Returns:
+            完整的分析结果
+            
+        Raises:
+            ValueError: 当输入参数无效时
+            
+        Example:
+            >>> analyzer = PairFrequencyAnalyzer()
+            >>> result = analyzer.analyze_pair_frequency("2025238", 20)
+            >>> print(f"分析了{result.actual_periods}期数据")
+        """
+        # 输入验证
+        self._validate_inputs(target_issue, period_count)
+        
+        # 检查缓存
+        cache_key = self._get_cache_key(target_issue, period_count)
+        cached_result = None
+        if use_cache:
+            cached_result = self.cache.get(cache_key)
+            if cached_result is not None:
+                self.logger.info(f"使用缓存结果: {cache_key}")
+                return cached_result
+        
+        # 记录分析开始
+        self.logger.info(f"开始分析数字对频率: 期号={target_issue}, 期数={period_count}")
+        
+        try:
+            # 获取历史数据
+            data = self._get_historical_data()
+            data_size = len(data) if not data.empty else 0
+            
+            # 执行核心分析（可能使用并行处理）
+            if self.enable_parallel and data_size > 50:
+                result = self._analyze_with_parallel_processing(data, target_issue, period_count)
+            else:
+                result = analyze_pair_frequency_core(data, target_issue, period_count)
+            
+            # 缓存结果
+            if use_cache:
+                self.cache.set(cache_key, result)
+            
+            # 记录性能数据
+            cache_hit = cached_result is not None
+            result_size = len(result.frequency_items)
+            self.performance_monitor.record_analysis(
+                execution_time=result.execution_time,
+                cache_hit=cache_hit,
+                data_size=data_size,
+                result_size=result_size
+            )
+            
+            # 记录分析完成
+            self.logger.info(
+                f"分析完成: 实际期数={result.actual_periods}, "
+                f"数字对总数={result.total_pairs}, "
+                f"执行时间={result.execution_time:.3f}秒"
+            )
+            
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"分析过程中发生错误: {str(e)}")
+            raise
+    
+    def _validate_inputs(self, target_issue: str, period_count: int):
+        """验证输入参数"""
+        if not validate_issue_format(target_issue):
+            raise ValueError(f"无效的期号格式: {target_issue}")
+        
+        if not isinstance(period_count, int) or period_count <= 0:
+            raise ValueError(f"期数必须是正整数: {period_count}")
+        
+        if period_count > 100:
+            raise ValueError(f"期数不能超过100: {period_count}")
+    
+    def _get_historical_data(self) -> pd.DataFrame:
+        """获取历史数据"""
+        if self.data_manager is not None:
+            # 使用数据管理器获取数据
+            return self.data_manager.load_historical_data()
+        else:
+            # 直接从文件读取数据
+            try:
+                data_path = "data/happy8_results.csv"
+                if os.path.exists(data_path):
+                    return pd.read_csv(data_path)
+                else:
+                    raise FileNotFoundError(f"数据文件不存在: {data_path}")
+            except Exception as e:
+                raise ValueError(f"无法读取历史数据: {str(e)}")
+    
+    def _get_cache_key(self, target_issue: str, period_count: int) -> str:
+        """生成缓存键"""
+        return f"{target_issue}_{period_count}"
+    
+    def clear_cache(self):
+        """清空缓存"""
+        self.cache.clear()
+        self.logger.info("缓存已清空")
+    
+    def get_cache_info(self) -> Dict[str, Any]:
+        """获取缓存信息"""
+        return self.cache.get_stats()
+    
+    def remove_cache_item(self, target_issue: str, period_count: int) -> bool:
+        """
+        删除指定的缓存项
+        
+        Args:
+            target_issue: 目标期号
+            period_count: 期数
+            
+        Returns:
+            是否成功删除
+        """
+        cache_key = self._get_cache_key(target_issue, period_count)
+        success = self.cache.remove(cache_key)
+        if success:
+            self.logger.info(f"删除缓存项: {cache_key}")
+        return success
+    
+    def resize_cache(self, new_size: int):
+        """
+        调整缓存大小
+        
+        Args:
+            new_size: 新的缓存大小
+        """
+        old_size = self.cache.max_size
+        self.cache.resize(new_size)
+        self.logger.info(f"缓存大小已调整: {old_size} -> {new_size}")
+    
+    def get_cache_hit_rate(self) -> float:
+        """获取缓存命中率"""
+        stats = self.cache.get_stats()
+        return stats['hit_rate']
+    
+    def _analyze_with_parallel_processing(self, data: pd.DataFrame, target_issue: str, period_count: int) -> PairFrequencyResult:
+        """
+        使用并行处理进行分析（适用于大数据集）
+        
+        Args:
+            data: 历史数据
+            target_issue: 目标期号
+            period_count: 统计期数
+            
+        Returns:
+            分析结果
+        """
+        from concurrent.futures import ThreadPoolExecutor
+        import numpy as np
+        
+        start_time = datetime.now()
+        
+        try:
+            # 计算期号范围
+            start_issue, end_issue, actual_periods = calculate_issue_range(
+                target_issue, period_count, data
+            )
+            
+            # 筛选数据
+            mask = (data['issue'] >= start_issue) & (data['issue'] <= end_issue)
+            filtered_data = data[mask]
+            
+            if filtered_data.empty:
+                # 返回空结果
+                return PairFrequencyResult(
+                    target_issue=target_issue,
+                    requested_periods=period_count,
+                    actual_periods=0,
+                    start_issue=start_issue,
+                    end_issue=end_issue,
+                    total_pairs=0,
+                    frequency_items=[],
+                    analysis_time=start_time,
+                    execution_time=0.0
+                )
+            
+            # 将数据分块进行并行处理
+            chunk_size = max(1, len(filtered_data) // self.max_workers)
+            data_chunks = [
+                filtered_data.iloc[i:i + chunk_size] 
+                for i in range(0, len(filtered_data), chunk_size)
+            ]
+            
+            # 并行处理每个数据块
+            with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+                futures = [
+                    executor.submit(self._process_data_chunk, chunk, start_issue, end_issue)
+                    for chunk in data_chunks
+                ]
+                
+                # 收集结果
+                chunk_results = [future.result() for future in futures]
+            
+            # 合并结果
+            combined_pair_counts = {}
+            for chunk_result in chunk_results:
+                for pair, count in chunk_result.items():
+                    combined_pair_counts[pair] = combined_pair_counts.get(pair, 0) + count
+            
+            # 排序和格式化结果
+            frequency_items = sort_pair_frequencies(combined_pair_counts, actual_periods)
+            
+            # 计算执行时间
+            execution_time = (datetime.now() - start_time).total_seconds()
+            
+            # 创建结果对象
+            result = PairFrequencyResult(
+                target_issue=target_issue,
+                requested_periods=period_count,
+                actual_periods=actual_periods,
+                start_issue=start_issue,
+                end_issue=end_issue,
+                total_pairs=len(frequency_items),
+                frequency_items=frequency_items,
+                analysis_time=start_time,
+                execution_time=execution_time
+            )
+            
+            return result
+            
+        except Exception as e:
+            execution_time = (datetime.now() - start_time).total_seconds()
+            raise ValueError(f"并行分析过程中发生错误: {str(e)}，执行时间: {execution_time:.3f}秒")
+    
+    def _process_data_chunk(self, chunk: pd.DataFrame, start_issue: str, end_issue: str) -> Dict[Tuple[int, int], int]:
+        """
+        处理单个数据块
+        
+        Args:
+            chunk: 数据块
+            start_issue: 起始期号
+            end_issue: 结束期号
+            
+        Returns:
+            数字对频率字典
+        """
+        return count_pair_frequencies(chunk, start_issue, end_issue)
+    
+    def optimize_performance(self) -> Dict[str, Any]:
+        """
+        性能优化建议
+        
+        Returns:
+            优化建议和当前性能状态
+        """
+        performance_report = self.performance_monitor.get_performance_report()
+        cache_stats = self.cache.get_stats()
+        
+        suggestions = []
+        
+        # 缓存命中率建议
+        if cache_stats['hit_rate'] < 50:
+            suggestions.append("缓存命中率较低，考虑增加缓存大小或优化查询模式")
+        
+        # 执行时间建议
+        if performance_report['avg_execution_time'] > 5.0:
+            suggestions.append("平均执行时间较长，建议启用并行处理或优化数据结构")
+        
+        # 内存使用建议
+        if performance_report['memory_usage_mb'] > 500:
+            suggestions.append("内存使用较高，考虑减少缓存大小或清理历史数据")
+        
+        # 并行处理建议
+        if not self.enable_parallel and performance_report['avg_execution_time'] > 2.0:
+            suggestions.append("建议启用并行处理以提高大数据集的处理速度")
+        
+        return {
+            'performance_report': performance_report,
+            'cache_stats': cache_stats,
+            'suggestions': suggestions,
+            'parallel_enabled': self.enable_parallel,
+            'max_workers': self.max_workers
+        }
+    
+    def set_parallel_processing(self, enabled: bool, max_workers: Optional[int] = None):
+        """
+        设置并行处理参数
+        
+        Args:
+            enabled: 是否启用并行处理
+            max_workers: 最大工作线程数
+        """
+        self.enable_parallel = enabled
+        if max_workers is not None:
+            self.max_workers = min(max_workers, os.cpu_count() or 1)
+        
+        self.logger.info(f"并行处理设置: enabled={enabled}, max_workers={self.max_workers}")
+    
+    def get_performance_report(self) -> Dict[str, Any]:
+        """获取详细的性能报告"""
+        return self.performance_monitor.get_performance_report()
+    
+    def get_performance_trend(self, last_n: int = 20) -> List[Dict[str, Any]]:
+        """获取性能趋势数据"""
+        return self.performance_monitor.get_recent_performance_trend(last_n)
+    
+    def reset_performance_metrics(self):
+        """重置性能指标"""
+        self.performance_monitor.reset_metrics()
+        self.logger.info("性能指标已重置")
+    
+    def benchmark_performance(self, test_cases: List[Tuple[str, int]]) -> Dict[str, Any]:
+        """
+        性能基准测试
+        
+        Args:
+            test_cases: 测试用例列表 [(target_issue, period_count), ...]
+            
+        Returns:
+            基准测试结果
+        """
+        self.logger.info(f"开始性能基准测试，共{len(test_cases)}个测试用例")
+        
+        benchmark_start = datetime.now()
+        results = []
+        
+        for i, (target_issue, period_count) in enumerate(test_cases):
+            try:
+                case_start = datetime.now()
+                result = self.analyze_pair_frequency(target_issue, period_count, use_cache=False)
+                case_time = (datetime.now() - case_start).total_seconds()
+                
+                results.append({
+                    'case_index': i + 1,
+                    'target_issue': target_issue,
+                    'period_count': period_count,
+                    'execution_time': case_time,
+                    'actual_periods': result.actual_periods,
+                    'result_size': len(result.frequency_items),
+                    'success': True
+                })
+                
+                self.logger.info(f"测试用例 {i+1}/{len(test_cases)} 完成: {case_time:.3f}秒")
+                
+            except Exception as e:
+                results.append({
+                    'case_index': i + 1,
+                    'target_issue': target_issue,
+                    'period_count': period_count,
+                    'execution_time': 0.0,
+                    'error': str(e),
+                    'success': False
+                })
+                
+                self.logger.error(f"测试用例 {i+1}/{len(test_cases)} 失败: {str(e)}")
+        
+        total_time = (datetime.now() - benchmark_start).total_seconds()
+        
+        # 计算统计信息
+        successful_results = [r for r in results if r['success']]
+        if successful_results:
+            execution_times = [r['execution_time'] for r in successful_results]
+            avg_time = sum(execution_times) / len(execution_times)
+            max_time = max(execution_times)
+            min_time = min(execution_times)
+        else:
+            avg_time = max_time = min_time = 0.0
+        
+        benchmark_report = {
+            'total_cases': len(test_cases),
+            'successful_cases': len(successful_results),
+            'failed_cases': len(test_cases) - len(successful_results),
+            'total_benchmark_time': total_time,
+            'avg_execution_time': avg_time,
+            'max_execution_time': max_time,
+            'min_execution_time': min_time,
+            'cases_per_second': len(test_cases) / total_time if total_time > 0 else 0,
+            'detailed_results': results
+        }
+        
+        self.logger.info(f"基准测试完成: {len(successful_results)}/{len(test_cases)} 成功")
+        
+        return benchmark_report
+    
+    def batch_analyze(
+        self, 
+        requests: List[Tuple[str, int]], 
+        use_cache: bool = True
+    ) -> List[PairFrequencyResult]:
+        """
+        批量分析多个请求
+        
+        Args:
+            requests: 请求列表，每个元素为(target_issue, period_count)
+            use_cache: 是否使用缓存
+            
+        Returns:
+            分析结果列表
+        """
+        results = []
+        
+        for i, (target_issue, period_count) in enumerate(requests):
+            try:
+                self.logger.info(f"批量分析进度: {i+1}/{len(requests)}")
+                result = self.analyze_pair_frequency(target_issue, period_count, use_cache)
+                results.append(result)
+            except Exception as e:
+                self.logger.error(f"批量分析失败: {target_issue}, {period_count}, 错误: {str(e)}")
+                # 可以选择跳过错误或抛出异常
+                raise
+        
+        return results
+    
+    def get_top_pairs_across_periods(
+        self, 
+        target_issue: str, 
+        period_counts: List[int], 
+        top_n: int = 10
+    ) -> Dict[int, List[PairFrequencyItem]]:
+        """
+        获取不同期数下的前N个高频数字对
+        
+        Args:
+            target_issue: 目标期号
+            period_counts: 期数列表
+            top_n: 返回前N个数字对
+            
+        Returns:
+            字典，键为期数，值为前N个数字对列表
+        """
+        results = {}
+        
+        for period_count in period_counts:
+            try:
+                result = self.analyze_pair_frequency(target_issue, period_count)
+                results[period_count] = result.get_top_pairs(top_n)
+            except Exception as e:
+                self.logger.error(f"分析失败: 期数={period_count}, 错误: {str(e)}")
+                results[period_count] = []
+        
+        return results
+    
+    def find_consistent_pairs(
+        self, 
+        target_issue: str, 
+        period_counts: List[int], 
+        min_frequency: float = 30.0
+    ) -> List[Tuple[int, int]]:
+        """
+        查找在不同期数下都保持高频的数字对
+        
+        Args:
+            target_issue: 目标期号
+            period_counts: 期数列表
+            min_frequency: 最小频率百分比
+            
+        Returns:
+            一致高频的数字对列表
+        """
+        consistent_pairs = None
+        
+        for period_count in period_counts:
+            try:
+                result = self.analyze_pair_frequency(target_issue, period_count)
+                
+                # 获取高频数字对
+                high_freq_pairs = set()
+                for item in result.frequency_items:
+                    if item.percentage >= min_frequency:
+                        high_freq_pairs.add(item.pair)
+                
+                # 计算交集
+                if consistent_pairs is None:
+                    consistent_pairs = high_freq_pairs
+                else:
+                    consistent_pairs = consistent_pairs.intersection(high_freq_pairs)
+                    
+            except Exception as e:
+                self.logger.error(f"查找一致数字对失败: 期数={period_count}, 错误: {str(e)}")
+        
+        return list(consistent_pairs) if consistent_pairs else []
 
 
 class Happy8Crawler:
@@ -726,8 +2289,8 @@ class Happy8Crawler:
                 break
 
             # 生成正确的日期格式
-            # 快乐8每天约288期，每5分钟一期
-            days_back = i // 288  # 每288期为一天
+            # 快乐8每天一期
+            days_back = i  # 每期为一天
             base_date = datetime(2025, 8, 17) - timedelta(days=days_back)
 
             # 生成中文星期格式
@@ -3933,6 +5496,7 @@ class Happy8Analyzer:
         self.prediction_engine = PredictionEngine(self)
         self.comparison_engine = ComparisonEngine(self)
         self.performance_monitor = PerformanceMonitor()
+        self.pair_frequency_analyzer = PairFrequencyAnalyzer(self.data_manager)
         
         # 数据缓存
         self.historical_data = None
@@ -4207,6 +5771,100 @@ class Happy8Analyzer:
     def get_performance_summary(self) -> Dict[str, Any]:
         """获取性能摘要"""
         return self.performance_monitor.get_performance_summary()
+    
+    # 数字对频率分析方法
+    def analyze_pair_frequency(
+        self, 
+        target_issue: str, 
+        period_count: int,
+        use_cache: bool = True
+    ) -> PairFrequencyResult:
+        """
+        分析数字对频率
+        
+        Args:
+            target_issue: 目标期号（如"2025238"）
+            period_count: 统计期数
+            use_cache: 是否使用缓存
+            
+        Returns:
+            完整的分析结果
+            
+        Example:
+            >>> analyzer = Happy8Analyzer()
+            >>> result = analyzer.analyze_pair_frequency("2025238", 20)
+            >>> print(f"分析了{result.actual_periods}期数据")
+        """
+        return self.pair_frequency_analyzer.analyze_pair_frequency(
+            target_issue, period_count, use_cache
+        )
+    
+    def batch_analyze_pair_frequency(
+        self, 
+        requests: List[Tuple[str, int]], 
+        use_cache: bool = True
+    ) -> List[PairFrequencyResult]:
+        """
+        批量分析数字对频率
+        
+        Args:
+            requests: 请求列表，每个元素为(target_issue, period_count)
+            use_cache: 是否使用缓存
+            
+        Returns:
+            分析结果列表
+        """
+        return self.pair_frequency_analyzer.batch_analyze(requests, use_cache)
+    
+    def get_top_pairs_across_periods(
+        self, 
+        target_issue: str, 
+        period_counts: List[int], 
+        top_n: int = 10
+    ) -> Dict[int, List[PairFrequencyItem]]:
+        """
+        获取不同期数下的前N个高频数字对
+        
+        Args:
+            target_issue: 目标期号
+            period_counts: 期数列表
+            top_n: 返回前N个数字对
+            
+        Returns:
+            字典，键为期数，值为前N个数字对列表
+        """
+        return self.pair_frequency_analyzer.get_top_pairs_across_periods(
+            target_issue, period_counts, top_n
+        )
+    
+    def find_consistent_pairs(
+        self, 
+        target_issue: str, 
+        period_counts: List[int], 
+        min_frequency: float = 30.0
+    ) -> List[Tuple[int, int]]:
+        """
+        查找在不同期数下都保持高频的数字对
+        
+        Args:
+            target_issue: 目标期号
+            period_counts: 期数列表
+            min_frequency: 最小频率百分比
+            
+        Returns:
+            一致高频的数字对列表
+        """
+        return self.pair_frequency_analyzer.find_consistent_pairs(
+            target_issue, period_counts, min_frequency
+        )
+    
+    def clear_pair_frequency_cache(self):
+        """清空数字对频率分析缓存"""
+        self.pair_frequency_analyzer.clear_cache()
+    
+    def get_pair_frequency_cache_info(self) -> Dict[str, Any]:
+        """获取数字对频率分析缓存信息"""
+        return self.pair_frequency_analyzer.get_cache_info()
 
 
 class Happy8CLI:
@@ -4224,8 +5882,8 @@ class Happy8CLI:
             epilog="""
 示例用法:
   %(prog)s crawl --count 1000
-  %(prog)s predict --target 20250813001 --periods 300 --count 30 --method frequency
-  %(prog)s compare --target 20250813001 --periods 300 --count 30 --method ensemble
+  %(prog)s predict --target 2025238 --periods 300 --count 30 --method frequency
+  %(prog)s compare --target 2025238 --periods 300 --count 30 --method ensemble
             """
         )
         
