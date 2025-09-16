@@ -31,8 +31,9 @@ import json
 # 导入核心分析器
 try:
     from happy8_analyzer import Happy8Analyzer, PredictionResult, ComparisonResult, PairFrequencyResult, PairFrequencyItem
+    from batch_predictor import BatchPredictor, BatchConfig, BatchResult, ExportEngine
 except ImportError:
-    st.error("无法导入核心分析器，请确保 happy8_analyzer.py 文件存在")
+    st.error("无法导入核心分析器，请确保 happy8_analyzer.py 和 batch_predictor.py 文件存在")
     st.stop()
 
 # 页面配置
@@ -1264,6 +1265,480 @@ def _show_consistent_pairs_analysis(analyzer: Happy8Analyzer, target_issue: str)
         st.warning("未找到在所有期数下都保持高频的数字对")
 
 
+def show_batch_prediction_interface():
+    """显示批量预测对比界面"""
+    st.header("🔄 批量预测对比")
+    st.markdown("对同一期号进行多次预测，统计分析算法的稳定性和准确性")
+    
+    # 初始化session_state
+    if 'batch_session' not in st.session_state:
+        st.session_state.batch_session = None
+    if 'batch_result' not in st.session_state:
+        st.session_state.batch_result = None
+    
+    analyzer = get_analyzer()
+    if analyzer is None:
+        st.error("分析器未初始化")
+        return
+
+    # 显示当前数据状态
+    try:
+        data = analyzer.load_data()
+        st.info(f"📊 当前数据量: {len(data)} 期 | 最新期号: {data.iloc[0]['issue'] if len(data) > 0 else '无'}")
+    except:
+        st.warning("⚠️ 数据加载异常，请到数据管理页面检查数据状态")
+        return
+
+    # 参数配置区域
+    st.subheader("📋 批量预测配置")
+    
+    with st.container():
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            # 获取智能默认期号
+            def get_smart_default_issue():
+                try:
+                    if len(data) > 0:
+                        latest_issue = data.iloc[0]['issue']
+                        return str(latest_issue)
+                except:
+                    pass
+                return "2025091"
+            
+            target_issue = st.text_input(
+                "目标期号", 
+                value=get_smart_default_issue(),
+                help="输入要预测的期号，格式如：2025091"
+            )
+            
+            analysis_periods = st.number_input(
+                "分析期数",
+                min_value=10,
+                max_value=500, 
+                value=100,
+                step=10,
+                help="用于分析的历史期数（建议50-200期）"
+            )
+            
+        with col2:
+            # 预测方法选择
+            method_options = {
+                "frequency": "📊 频率分析",
+                "hot_cold": "🌡️ 冷热号分析", 
+                "missing": "📉 遗漏分析",
+                "markov_chain": "🔗 马尔可夫链",
+                "markov_2nd": "🔗 2阶马尔可夫链",
+                "markov_3rd": "🔗 3阶马尔可夫链",
+                "adaptive_markov": "🤖 自适应马尔可夫链",
+                "transformer": "🤖 Transformer模型",
+                "gnn": "🕸️ 图神经网络",
+                "monte_carlo": "🎲 蒙特卡洛模拟",
+                "clustering": "🎯 聚类分析",
+                "ensemble": "🚀 集成学习",
+                "bayesian": "📈 贝叶斯推理",
+                "super_predictor": "⭐ 超级预测器",
+                "high_confidence": "💎 高置信度预测"
+            }
+            
+            selected_method = st.selectbox(
+                "预测方法",
+                options=list(method_options.keys()),
+                format_func=lambda x: method_options[x],
+                index=3,  # 默认选择马尔可夫链
+                help="选择预测算法"
+            )
+            
+            number_count = st.number_input(
+                "生成号码数量",
+                min_value=1,
+                max_value=30,
+                value=20,
+                step=1,
+                help="每轮预测生成的号码数量"
+            )
+            
+        with col3:
+            comparison_times = st.number_input(
+                "对比次数",
+                min_value=1,
+                max_value=100,
+                value=20,
+                step=1,
+                help="重复预测的次数"
+            )
+            
+            max_parallel = st.number_input(
+                "最大并发数",
+                min_value=1,
+                max_value=8,
+                value=4,
+                step=1,
+                help="并行执行的最大线程数"
+            )
+            
+            timeout_seconds = st.number_input(
+                "单次预测超时(秒)",
+                min_value=10,
+                max_value=120,
+                value=30,
+                step=5,
+                help="单次预测的超时时间"
+            )
+
+    # 执行控制区域
+    st.subheader("🎮 执行控制")
+    
+    col1, col2, col3 = st.columns([2, 1, 1])
+    
+    with col1:
+        start_button = st.button(
+            "🚀 开始批量预测", 
+            type="primary",
+            disabled=(st.session_state.batch_session is not None and 
+                     st.session_state.batch_session.get('status') == 'running'),
+            help="点击开始执行批量预测"
+        )
+    
+    with col2:
+        cancel_button = st.button(
+            "❌ 取消预测",
+            disabled=(st.session_state.batch_session is None or 
+                     st.session_state.batch_session.get('status') != 'running'),
+            help="取消当前的批量预测"
+        )
+    
+    with col3:
+        clear_button = st.button(
+            "🧹 清除结果",
+            help="清除当前的预测结果"
+        )
+    
+    # 进度显示区域
+    progress_container = st.container()
+    
+    # 执行逻辑
+    if start_button:
+        try:
+            # 参数验证
+            if not target_issue or len(target_issue) != 7:
+                st.error("期号必须是7位数字")
+                return
+                
+            # 创建BatchConfig
+            config = BatchConfig(
+                target_issue=target_issue,
+                analysis_periods=analysis_periods,
+                prediction_method=selected_method,
+                number_count=number_count,
+                comparison_times=comparison_times,
+                max_parallel=max_parallel,
+                timeout_seconds=timeout_seconds
+            )
+            
+            # 初始化批量预测器
+            batch_predictor = BatchPredictor(analyzer)
+            
+            # 创建进度显示
+            with progress_container:
+                st.info("🔄 正在准备批量预测...")
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                current_round_text = st.empty()
+                
+                # 执行批量预测
+                def progress_callback(session):
+                    progress = session.progress / 100
+                    progress_bar.progress(progress)
+                    status_text.text(f"状态: {session.status} | 进度: {session.progress:.1f}%")
+                    current_round_text.text(f"当前轮次: {session.current_round}/{config.comparison_times}")
+                
+                # 保存会话信息到session_state
+                st.session_state.batch_session = {'status': 'running'}
+                
+                try:
+                    # 执行批量预测
+                    batch_result = batch_predictor.execute_batch_prediction(
+                        config, 
+                        progress_callback
+                    )
+                    
+                    # 保存结果
+                    st.session_state.batch_result = batch_result
+                    st.session_state.batch_session = {'status': 'completed'}
+                    
+                    st.success("✅ 批量预测完成！")
+                    
+                except Exception as e:
+                    st.session_state.batch_session = {'status': 'failed'}
+                    st.error(f"❌ 批量预测失败: {str(e)}")
+                    
+        except Exception as e:
+            st.error(f"❌ 配置错误: {str(e)}")
+    
+    if cancel_button:
+        st.session_state.batch_session = {'status': 'cancelled'}
+        st.warning("❌ 批量预测已取消")
+    
+    if clear_button:
+        st.session_state.batch_session = None
+        st.session_state.batch_result = None
+        st.success("🧹 结果已清除")
+        st.rerun()
+
+    # 结果展示区域
+    if st.session_state.batch_result:
+        show_batch_prediction_results(st.session_state.batch_result)
+
+
+def show_batch_prediction_results(batch_result: BatchResult):
+    """显示批量预测结果"""
+    st.subheader("📊 预测结果分析")
+    
+    stats = batch_result.statistics
+    session = batch_result.session
+    
+    # 统计摘要卡片
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric(
+            "总轮次", 
+            stats.total_rounds,
+            help="总预测轮次"
+        )
+    
+    with col2:
+        st.metric(
+            "成功轮次", 
+            stats.success_rounds,
+            delta=f"{(stats.success_rounds/stats.total_rounds*100):.1f}%" if stats.total_rounds > 0 else "0%",
+            help="成功执行的预测轮次"
+        )
+    
+    with col3:
+        st.metric(
+            "平均命中率",
+            f"{stats.avg_hit_rate:.2%}",
+            help="所有成功预测的平均命中率"
+        )
+    
+    with col4:
+        st.metric(
+            "命中率区间",
+            f"{stats.min_hit_rate:.1%} - {stats.max_hit_rate:.1%}",
+            help="最低和最高命中率"
+        )
+
+    # 详细统计信息
+    st.subheader("📈 详细统计")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.write("**统计指标**")
+        stats_data = {
+            "指标": ["标准差", "95%置信区间", "平均执行时间", "总执行时间"],
+            "数值": [
+                f"{stats.std_deviation:.4f}",
+                f"[{stats.confidence_interval[0]:.2%}, {stats.confidence_interval[1]:.2%}]",
+                f"{stats.avg_execution_time:.3f}秒",
+                f"{stats.total_execution_time:.3f}秒"
+            ]
+        }
+        st.dataframe(pd.DataFrame(stats_data), hide_index=True, use_container_width=True)
+    
+    with col2:
+        st.write("**四分位数**")
+        if len(stats.quartiles) >= 4:
+            quartile_data = {
+                "分位数": ["最小值", "Q1 (25%)", "中位数 (50%)", "Q3 (75%)", "最大值"],
+                "命中率": [f"{q:.2%}" for q in stats.quartiles]
+            }
+            st.dataframe(pd.DataFrame(quartile_data), hide_index=True, use_container_width=True)
+
+    # 命中率分布图
+    if stats.hit_rate_distribution:
+        st.subheader("📊 命中率分布")
+        
+        # 创建分布数据
+        ranges = list(stats.hit_rate_distribution.keys())
+        counts = list(stats.hit_rate_distribution.values())
+        
+        fig = px.bar(
+            x=ranges, 
+            y=counts,
+            title="命中率区间分布",
+            labels={'x': '命中率区间', 'y': '频次'},
+            color=counts,
+            color_continuous_scale='viridis'
+        )
+        fig.update_layout(height=400)
+        st.plotly_chart(fig, use_container_width=True)
+
+    # 预测结果详情表
+    st.subheader("📋 预测结果详情")
+    
+    if batch_result.predictions:
+        # 准备表格数据
+        detail_data = []
+        for pred in batch_result.predictions:
+            detail_data.append({
+                "轮次": pred.round_number,
+                "预测号码": ", ".join(map(str, pred.predicted_numbers[:10])) + ("..." if len(pred.predicted_numbers) > 10 else ""),
+                "命中号码": ", ".join(map(str, pred.hit_numbers)) if pred.hit_numbers else "无",
+                "命中数量": pred.hit_count,
+                "命中率": f"{pred.hit_rate:.2%}",
+                "执行时间": f"{pred.execution_time:.3f}s",
+                "状态": "成功" if pred.success else "失败"
+            })
+        
+        detail_df = pd.DataFrame(detail_data)
+        
+        # 使用颜色区分成功和失败
+        def highlight_rows(row):
+            if row['状态'] == '失败':
+                return ['background-color: #ffebee'] * len(row)
+            elif float(row['命中率'].replace('%', '')) > stats.avg_hit_rate * 100:
+                return ['background-color: #e8f5e8'] * len(row)
+            else:
+                return [''] * len(row)
+        
+        styled_df = detail_df.style.apply(highlight_rows, axis=1)
+        st.dataframe(styled_df, use_container_width=True, hide_index=True)
+
+    # 导出功能
+    st.subheader("📥 导出结果")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        if st.button("📊 导出Excel文件", type="primary"):
+            try:
+                # 生成文件名
+                filename = ExportEngine.generate_download_filename(batch_result, 'excel')
+                
+                # 创建临时文件
+                import tempfile
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp:
+                    excel_path = ExportEngine.export_to_excel(batch_result, tmp.name)
+                    
+                    # 读取文件内容
+                    with open(excel_path, 'rb') as f:
+                        excel_data = f.read()
+                    
+                    # 提供下载
+                    st.download_button(
+                        label="⬇️ 下载Excel文件",
+                        data=excel_data,
+                        file_name=filename,
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+                    
+                    # 清理临时文件
+                    import os
+                    os.unlink(excel_path)
+                    
+                    st.success("Excel文件已生成，点击下载按钮获取文件")
+                    
+            except Exception as e:
+                st.error(f"导出Excel失败: {str(e)}")
+    
+    with col2:
+        if st.button("📄 导出CSV文件"):
+            try:
+                # 生成文件名
+                filename = ExportEngine.generate_download_filename(batch_result, 'csv')
+                
+                # 创建临时文件
+                import tempfile
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.csv') as tmp:
+                    csv_path = ExportEngine.export_to_csv(batch_result, tmp.name)
+                    
+                    # 读取文件内容
+                    with open(csv_path, 'r', encoding='utf-8-sig') as f:
+                        csv_data = f.read()
+                    
+                    # 提供下载
+                    st.download_button(
+                        label="⬇️ 下载CSV文件",
+                        data=csv_data,
+                        file_name=filename,
+                        mime="text/csv"
+                    )
+                    
+                    # 清理临时文件
+                    import os
+                    os.unlink(csv_path)
+                    
+                    st.success("CSV文件已生成，点击下载按钮获取文件")
+                    
+            except Exception as e:
+                st.error(f"导出CSV失败: {str(e)}")
+
+    # 命中率趋势图
+    if len(batch_result.predictions) > 1:
+        st.subheader("📈 命中率趋势")
+        
+        # 准备趋势数据
+        trend_data = []
+        for pred in batch_result.predictions:
+            if pred.success:
+                trend_data.append({
+                    "轮次": pred.round_number,
+                    "命中率": pred.hit_rate,
+                    "平均线": stats.avg_hit_rate
+                })
+        
+        if trend_data:
+            trend_df = pd.DataFrame(trend_data)
+            
+            fig = go.Figure()
+            
+            # 添加命中率折线
+            fig.add_trace(go.Scatter(
+                x=trend_df['轮次'],
+                y=trend_df['命中率'],
+                mode='lines+markers',
+                name='命中率',
+                line=dict(color='blue', width=2),
+                marker=dict(size=6)
+            ))
+            
+            # 添加平均线
+            fig.add_trace(go.Scatter(
+                x=trend_df['轮次'],
+                y=trend_df['平均线'],
+                mode='lines',
+                name=f'平均命中率 ({stats.avg_hit_rate:.2%})',
+                line=dict(color='red', width=2, dash='dash')
+            ))
+            
+            # 添加置信区间
+            fig.add_hline(
+                y=stats.confidence_interval[0], 
+                line_dash="dot", 
+                line_color="orange",
+                annotation_text=f"95%置信下限: {stats.confidence_interval[0]:.2%}"
+            )
+            fig.add_hline(
+                y=stats.confidence_interval[1], 
+                line_dash="dot", 
+                line_color="orange",
+                annotation_text=f"95%置信上限: {stats.confidence_interval[1]:.2%}"
+            )
+            
+            fig.update_layout(
+                title="命中率变化趋势",
+                xaxis_title="预测轮次",
+                yaxis_title="命中率",
+                hovermode='x unified',
+                height=500
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
+
+
 def show_system_settings():
     """显示系统设置"""
     st.header("⚙️ 系统设置")
@@ -1321,6 +1796,7 @@ def main():
             "🏠 首页",
             "📊 数据管理",
             "🎯 智能预测",
+            "🔄 批量预测对比",  # 新增功能
             "🔢 数字对分析",
             "📋 历史记录",
             "⚙️ 系统设置"
@@ -1357,6 +1833,8 @@ def main():
         show_data_management()
     elif page == "🎯 智能预测":
         show_prediction_interface()
+    elif page == "🔄 批量预测对比":
+        show_batch_prediction_interface()
     elif page == "🔢 数字对分析":
         show_pair_frequency_analysis()
     elif page == "📋 历史记录":

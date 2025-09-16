@@ -151,6 +151,7 @@ backup/
 
 # kiro
 ./kiro
+.kiro
 
 # Model files (可选，如果模型文件很大)
 # *.h5
@@ -160,3 +161,19 @@ backup/
 # Data files (可选，根据需要调整)
 # data/*.csv
 # data/*.json
+
+# 忽略Claude 文件
+CLAUDE.md
+
+# 忽略claude 文件夹
+.claude
+
+# 忽略data文件夹
+data
+
+# 忽略docs文件夹
+docs
+
+# 忽略codebuddy
+.codebuddy
+

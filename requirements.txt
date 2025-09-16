@@ -27,6 +27,9 @@ streamlit>=1.25.0
 requests>=2.28.0
 beautifulsoup4>=4.11.0
 
+# Excel导出支持
+openpyxl>=3.1.0
+
 # 超参数优化 (可选，云端部署时注释)
 # optuna>=3.2.0
 
