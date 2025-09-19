@@ -963,7 +963,7 @@ def show_pair_frequency_analysis():
         col_adv1, col_adv2 = st.columns(2)
         
         with col_adv1:
-            show_top_n = st.number_input("显示前N个结果", min_value=5, max_value=50, value=20)
+            show_top_n = st.number_input("显示前N个结果", min_value=5, max_value=5000, value=20)
             export_format = st.selectbox("导出格式", ["CSV", "Excel", "JSON"])
         
         with col_adv2:

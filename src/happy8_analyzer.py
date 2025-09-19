@@ -513,7 +513,7 @@ class PairFrequencyResult:
 """
         
         # 添加数据行
-        for i, item in enumerate(self.frequency_items[:50]):  # 只显示前50个
+        for i, item in enumerate(self.frequency_items):  # 显示所有结果
             row_class = "top-pair" if i < 10 else ""
             html += f"""
             <tr class="{row_class}">
