@@ -1,16 +1,13 @@
 import type { PredictStep } from '@/types/predict'
 
-export const RED_BALL_MIN = 1
-export const RED_BALL_MAX = 33
-export const BLUE_BALL_MIN = 1
-export const BLUE_BALL_MAX = 16
-export const RED_BALL_COUNT = 6
-export const BLUE_BALL_COUNT = 1
+export const BALL_MIN = 1
+export const BALL_MAX = 80
+export const BALL_COUNT = 20
 
 // API配置
 // 生产环境使用空字符串（相对路径），开发环境使用 localhost:7000
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
-export const API_PREFIX = '/api/wechat'
+export const API_PREFIX = '/api'
 export const WS_BASE_URL = import.meta.env.VITE_WS_URL ?? ''
 export const API_TIMEOUT = 30000
 
