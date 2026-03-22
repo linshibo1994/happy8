@@ -35,4 +35,4 @@ HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8501/_stcore/health || exit 1
 
 # 启动命令
-CMD ["python", "start.py", "web"]
+CMD ["python", "main.py", "web"]
