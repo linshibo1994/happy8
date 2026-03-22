@@ -1,0 +1,157 @@
+# VS Code工作区配置
+
+{
+    "folders": [
+        {
+            "name": "Happy8 MiniProgram",
+            "path": "."
+        },
+        {
+            "name": "Backend",
+            "path": "./backend"
+        },
+        {
+            "name": "Frontend", 
+            "path": "./frontend"
+        }
+    ],
+    "settings": {
+        "python.defaultInterpreterPath": "./backend/venv/bin/python",
+        "python.terminal.activateEnvironment": true,
+        "python.linting.enabled": true,
+        "python.linting.pylintEnabled": false,
+        "python.linting.flake8Enabled": true,
+        "python.formatting.provider": "black",
+        "python.sortImports.args": ["--profile", "black"],
+        "editor.formatOnSave": true,
+        "editor.codeActionsOnSave": {
+            "source.organizeImports": true
+        },
+        "files.exclude": {
+            "**/__pycache__": true,
+            "**/*.pyc": true,
+            "**/node_modules": true,
+            "**/dist": true,
+            "**/build": true,
+            "**/.git": false
+        },
+        "typescript.preferences.importModuleSpecifier": "relative",
+        "eslint.workingDirectories": ["frontend"],
+        "docker.showStartPage": false
+    },
+    "extensions": {
+        "recommendations": [
+            "ms-python.python",
+            "ms-python.black-formatter",
+            "ms-python.isort",
+            "ms-python.flake8",
+            "ms-vscode.vscode-typescript-next",
+            "vue.volar",
+            "ms-vscode.vscode-docker",
+            "bradlc.vscode-tailwindcss",
+            "esbenp.prettier-vscode",
+            "ms-vscode.vscode-json",
+            "redhat.vscode-yaml",
+            "ms-vscode-remote.remote-containers"
+        ]
+    },
+    "launch": {
+        "version": "0.2.0",
+        "configurations": [
+            {
+                "name": "FastAPI Debug",
+                "type": "python",
+                "request": "launch",
+                "program": "${workspaceFolder}/backend/app/main.py",
+                "console": "integratedTerminal",
+                "cwd": "${workspaceFolder}/backend",
+                "env": {
+                    "PYTHONPATH": "${workspaceFolder}/backend"
+                },
+                "args": []
+            },
+            {
+                "name": "Docker: Attach to Backend",
+                "type": "python",
+                "request": "attach",
+                "port": 5678,
+                "host": "localhost",
+                "pathMappings": [
+                    {
+                        "localRoot": "${workspaceFolder}/backend",
+                        "remoteRoot": "/app"
+                    }
+                ]
+            }
+        ]
+    },
+    "tasks": {
+        "version": "2.0.0",
+        "tasks": [
+            {
+                "label": "Start Development Environment",
+                "type": "shell",
+                "command": "./deployment/scripts/start-dev.sh",
+                "group": {
+                    "kind": "build",
+                    "isDefault": true
+                },
+                "presentation": {
+                    "echo": true,
+                    "reveal": "always",
+                    "focus": false,
+                    "panel": "shared"
+                },
+                "problemMatcher": []
+            },
+            {
+                "label": "Stop Development Environment", 
+                "type": "shell",
+                "command": "docker-compose down",
+                "group": "build",
+                "presentation": {
+                    "echo": true,
+                    "reveal": "always",
+                    "focus": false,
+                    "panel": "shared"
+                }
+            },
+            {
+                "label": "Backend: Run Tests",
+                "type": "shell",
+                "command": "docker-compose run --rm backend pytest",
+                "group": "test",
+                "presentation": {
+                    "echo": true,
+                    "reveal": "always",
+                    "focus": false,
+                    "panel": "shared"
+                }
+            },
+            {
+                "label": "Backend: Format Code",
+                "type": "shell",
+                "command": "docker-compose run --rm backend black app tests",
+                "group": "build",
+                "presentation": {
+                    "echo": true,
+                    "reveal": "always", 
+                    "focus": false,
+                    "panel": "shared"
+                }
+            },
+            {
+                "label": "Database: Run Migrations",
+                "type": "shell", 
+                "command": "docker-compose run --rm backend alembic upgrade head",
+                "group": "build",
+                "presentation": {
+                    "echo": true,
+                    "reveal": "always",
+                    "focus": false,
+                    "panel": "shared"
+                }
+            }
+        ]
+    }
+}

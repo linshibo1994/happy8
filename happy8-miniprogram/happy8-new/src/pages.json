@@ -1,0 +1,146 @@
+{
+  "easycom": {
+    "autoscan": true,
+    "custom": {
+      "^wd-(.*)": "wot-design-uni/components/wd-$1/wd-$1.vue"
+    }
+  },
+  "pages": [
+    {
+      "path": "pages/index/index",
+      "style": {
+        "navigationBarTitleText": "Happy8智能预测",
+        "enablePullDownRefresh": true,
+        "backgroundTextStyle": "dark"
+      }
+    },
+    {
+      "path": "pages/predict/predict",
+      "style": {
+        "navigationBarTitleText": "智能预测",
+        "enablePullDownRefresh": false
+      }
+    },
+    {
+      "path": "pages/history/history",
+      "style": {
+        "navigationBarTitleText": "预测历史",
+        "enablePullDownRefresh": true,
+        "backgroundTextStyle": "dark"
+      }
+    },
+    {
+      "path": "pages/history/detail",
+      "style": {
+        "navigationBarTitleText": "历史详情",
+        "enablePullDownRefresh": false
+      }
+    },
+    {
+      "path": "pages/member/member",
+      "style": {
+        "navigationBarTitleText": "会员中心",
+        "enablePullDownRefresh": true,
+        "backgroundTextStyle": "dark"
+      }
+    },
+    {
+      "path": "pages/profile/profile",
+      "style": {
+        "navigationBarTitleText": "个人中心",
+        "enablePullDownRefresh": false
+      }
+    },
+    {
+      "path": "pages/lottery/results",
+      "style": {
+        "navigationBarTitleText": "开奖结果",
+        "enablePullDownRefresh": true
+      }
+    },
+    {
+      "path": "pages/prediction/detail",
+      "style": {
+        "navigationBarTitleText": "预测详情",
+        "enablePullDownRefresh": false
+      }
+    },
+    {
+      "path": "pages/order/detail",
+      "style": {
+        "navigationBarTitleText": "订单详情",
+        "enablePullDownRefresh": false
+      }
+    },
+    {
+      "path": "pages/order/list",
+      "style": {
+        "navigationBarTitleText": "订单列表",
+        "enablePullDownRefresh": true
+      }
+    }
+  ],
+  "globalStyle": {
+    "navigationBarTextStyle": "white",
+    "navigationBarTitleText": "Happy8智能预测",
+    "navigationBarBackgroundColor": "#d32f2f",
+    "backgroundColor": "#f5f5f5",
+    "backgroundTextStyle": "dark",
+    "enablePullDownRefresh": false,
+    "onReachBottomDistance": 50
+  },
+  "tabBar": {
+    "color": "#999999",
+    "selectedColor": "#d32f2f",
+    "backgroundColor": "#ffffff",
+    "borderStyle": "black",
+    "position": "bottom",
+    "list": [
+      {
+        "pagePath": "pages/index/index",
+        "text": "首页",
+        "iconPath": "static/icons/home.png",
+        "selectedIconPath": "static/icons/home-active.png"
+      },
+      {
+        "pagePath": "pages/predict/predict",
+        "text": "预测",
+        "iconPath": "static/icons/predict.png",
+        "selectedIconPath": "static/icons/predict-active.png"
+      },
+      {
+        "pagePath": "pages/history/history",
+        "text": "历史",
+        "iconPath": "static/icons/history.png",
+        "selectedIconPath": "static/icons/history-active.png"
+      },
+      {
+        "pagePath": "pages/member/member",
+        "text": "会员",
+        "iconPath": "static/icons/member.png",
+        "selectedIconPath": "static/icons/member-active.png"
+      },
+      {
+        "pagePath": "pages/profile/profile",
+        "text": "我的",
+        "iconPath": "static/icons/profile.png",
+        "selectedIconPath": "static/icons/profile-active.png"
+      }
+    ]
+  },
+  "condition": {
+    "current": 0,
+    "list": [
+      {
+        "name": "首页",
+        "path": "pages/index/index",
+        "query": ""
+      },
+      {
+        "name": "预测页面",
+        "path": "pages/predict/predict",
+        "query": ""
+      }
+    ]
+  }
+}

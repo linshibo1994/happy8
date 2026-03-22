@@ -1,0 +1,63 @@
+{
+  "name": "happy8-miniprogram",
+  "version": "1.0.0",
+  "description": "Happy8快乐8智能预测微信小程序",
+  "main": "main.js",
+  "scripts": {
+    "postinstall": "node scripts/fix-uniapp-bugs.js",
+    "dev:mp-weixin": "uni",
+    "build:mp-weixin": "uni build",
+    "dev:h5": "vite --host 0.0.0.0",
+    "build:h5": "vite build",
+    "type-check": "vue-tsc --noEmit",
+    "lint": "eslint src --ext .vue,.js,.ts,.tsx",
+    "lint:fix": "eslint src --ext .vue,.js,.ts,.tsx --fix",
+    "prettier": "prettier --write src/**/*.{vue,js,ts,tsx,json,css,scss}"
+  },
+  "dependencies": {
+    "@dcloudio/uni-app": "^3.0.0-4010920240930001",
+    "@dcloudio/uni-h5": "^3.0.0-4010920240930001",
+    "@dcloudio/uni-mp-weixin": "^3.0.0-4010920240930001",
+    "@vue/compiler-sfc": "^3.4.38",
+    "@vue/server-renderer": "^3.4.38",
+    "@vueuse/core": "^10.9.0",
+    "dayjs": "^1.11.10",
+    "pinia": "^2.1.7",
+    "pinia-plugin-persistedstate": "^3.2.1",
+    "vue": "^3.4.38",
+    "wot-design-uni": "^1.3.14"
+  },
+  "devDependencies": {
+    "@dcloudio/types": "^3.4.8",
+    "@dcloudio/uni-automator": "^3.0.0-4010920240930001",
+    "@dcloudio/uni-cli-shared": "^3.0.0-4010920240930001",
+    "@dcloudio/vite-plugin-uni": "^3.0.0-4010920240930001",
+    "@types/node": "^20.11.30",
+    "@typescript-eslint/eslint-plugin": "^7.3.1",
+    "@typescript-eslint/parser": "^7.3.1",
+    "@uni-helper/uni-app-types": "^0.5.13",
+    "@vitejs/plugin-vue": "^4.6.2",
+    "@vue/eslint-config-prettier": "^9.0.0",
+    "@vue/eslint-config-typescript": "^13.0.0",
+    "eslint": "^8.57.0",
+    "eslint-plugin-vue": "^9.24.0",
+    "prettier": "^3.2.5",
+    "sass": "^1.72.0",
+    "typescript": "^5.4.3",
+    "vite": "^4.5.3",
+    "vue-tsc": "^1.8.27"
+  },
+  "uni-app": {
+    "scripts": {}
+  },
+  "keywords": [
+    "uni-app",
+    "微信小程序",
+    "快乐8",
+    "彩票预测",
+    "Vue3",
+    "TypeScript"
+  ],
+  "author": "linshibo",
+  "license": "MIT"
+}

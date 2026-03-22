@@ -1,0 +1,15 @@
+{
+  "version": "1.0",
+  "configurations": [
+    {
+      "type": "uniCloud",
+      "default": {
+        "name": "uni-app",
+        "type": "uni-app:app-android"
+      }
+    }
+  ],
+  "uni-app": {
+    "scripts": {}
+  }
+}

@@ -177,3 +177,14 @@ docs
 # 忽略codebuddy
 .codebuddy
 
+.serena/
+
+# Node.js
+node_modules/
+npm-cache/
+.npm-cache/
+npm-debug.log*
+package-lock.json
+
+# Frontend template
+frontend-template/
