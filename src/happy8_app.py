@@ -1550,6 +1550,7 @@ def show_batch_prediction_results(batch_result: BatchResult):
     
     with col2:
         st.write("**四分位数**")
+        quartile_data = None
         if len(stats.quartiles) >= 5:
             quartile_data = {
                 "分位数": ["最小值", "Q1 (25%)", "中位数 (50%)", "Q3 (75%)", "最大值"],
@@ -1560,6 +1561,7 @@ def show_batch_prediction_results(batch_result: BatchResult):
                 "分位数": ["最小值", "Q1 (25%)", "中位数 (50%)", "Q3 (75%)"],
                 "命中率": [f"{q:.2%}" for q in stats.quartiles[:4]]
             }
+        if quartile_data:
             st.dataframe(pd.DataFrame(quartile_data), hide_index=True, use_container_width=True)
 
     # 命中率分布图
