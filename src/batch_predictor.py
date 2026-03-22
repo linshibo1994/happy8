@@ -295,7 +295,7 @@ class StatisticEngine:
                 std_deviation=0.0,
                 hit_rate_distribution={},
                 confidence_interval=(0.0, 0.0),
-                quartiles=[0.0, 0.0, 0.0, 0.0],
+                quartiles=[0.0, 0.0, 0.0, 0.0, 0.0],
                 percentiles={},
                 outliers=[],
                 avg_execution_time=0.0,
