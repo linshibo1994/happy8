@@ -1,12 +1,12 @@
 # 快乐8智能预测系统 🎯
 
-一个基于机器学习和数据分析的快乐8彩票号码智能预测系统，集成多种高级预测算法，提供Web界面和命令行界面，支持实时数据爬取和预测结果分析。
+一个基于机器学习和数据分析的快乐8彩票号码智能预测系统，集成多种高级预测算法，采用前后端分离架构，支持实时数据爬取、流式预测与结果分析。
 
 ## ✨ 项目特色
 
 - 🤖 **17种预测算法**: 频率分析、冷热号分析、遗漏分析、1-3阶马尔可夫链、自适应马尔可夫链、Transformer模型、图神经网络、蒙特卡洛模拟、聚类分析、自适应集成学习、贝叶斯推理、超级预测器、高置信度预测、LSTM神经网络、集成学习
 - 📊 **真实数据源**: 从官方彩票网站实时爬取真实开奖数据
-- 🎨 **双重界面**: 现代化Web界面 + 命令行界面
+- 🎨 **前后端分离**: Vue 3 SPA 前端 + FastAPI 后端 + 命令行能力
 - 📈 **智能分析**: 支持指定期数分析和指定个数号码生成
 - 🔄 **结果对比**: 自动对比预测结果与实际开奖号码
 - ⚡ **性能优化**: 缓存机制、并行处理、内存优化
@@ -14,27 +14,59 @@
 
 ## 🏗️ 系统架构
 
+### 前后端分离架构
+
+- **后端 (`backend/`)**: FastAPI 服务，提供 REST API 与 SSE 流式推送能力
+- **前端 (`frontend/`)**: Vue 3 + Naive UI + ECharts 的 SPA 单页应用
+- **核心引擎 (`src/`)**: `happy8_analyzer.py`（17种预测算法）+ `batch_predictor.py`（批量预测）
+- **部署 (`deployment/`)**: Docker Compose 编排前后端服务
+
+### backend/ 目录结构
+
+```text
+backend/
+├── main.py              # FastAPI 入口
+├── config.py            # 服务配置
+├── api/
+│   ├── routes/          # API 路由
+│   └── services/        # 业务服务层
+└── utils/               # 通用工具
 ```
-快乐8预测系统
-├── 数据层
-│   ├── 数据爬取器 (多数据源)
-│   ├── 数据验证器
-│   └── 数据管理器
-├── 算法层
-│   ├── 频率分析预测器
-│   ├── 冷热号分析预测器
-│   ├── 遗漏分析预测器
-│   ├── 马尔可夫链预测器
-│   ├── LSTM神经网络预测器
-│   └── 集成学习预测器
-├── 应用层
-│   ├── 预测引擎
-│   ├── 对比引擎
-│   └── 性能监控器
-└── 界面层
-    ├── Web界面 (Streamlit)
-    └── 命令行界面
+
+### frontend/ 目录结构
+
+```text
+frontend/
+├── src/
+│   ├── api/             # 接口调用层
+│   ├── views/           # 页面视图
+│   ├── components/      # 组件库
+│   ├── stores/          # 状态管理
+│   └── router/          # 路由配置
+├── package.json
+├── vite.config.ts
+└── Dockerfile
 ```
+
+### API 端点列表
+
+- `GET /`：服务信息
+- `GET /health`：健康检查
+- `GET /api/methods`：预测方法列表
+- `POST /api/predict`：普通预测
+- `GET /api/predict/stream`：SSE 流式预测
+- `POST /api/comparison/start`：SSE 流式批量对比
+- `GET /api/data/latest`：最新开奖数据
+- `POST /api/data/history`：历史数据分页查询
+- `POST /api/data/refresh`：刷新数据（本地重载/网络更新）
+- `GET /api/data/statistics`：统计分析
+- `GET /api/analysis/frequency`：频率分析
+- `GET /api/analysis/hot-cold`：冷热号分析
+- `GET /api/analysis/missing`：遗漏分析
+- `GET /api/analysis/pair-frequency`：数字对频率分析
+- `GET /api/system/info`：系统信息
+- `POST /api/system/cache/clear`：清理缓存
+- `GET /docs`：Swagger API 文档
 
 ## 🧠 核心算法详解
 
@@ -189,35 +221,36 @@
 ## 🚀 快速开始
 
 ### 环境要求
-- Python 3.8+
-- 内存: 2GB+
+- Python 3.10+
+- Node.js 18+
+- Docker / Docker Compose（可选）
 - 网络连接（用于数据爬取）
 
 ### 安装依赖
 ```bash
+# Python 核心依赖
 pip install -r requirements.txt
+
+# 前端依赖
+cd frontend && npm install
 ```
 
-### 一键部署
+### Key Commands
+
 ```bash
-# 完整部署（环境检查 + 依赖安装 + 数据初始化 + 测试）
-python main.py deploy
+# 启动后端
+uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
 
-# 或直接运行部署脚本
-python deployment/deploy.py --check-only
+# 启动前端
+cd frontend && npm install && npm run dev
+
+# Docker 部署
+cd deployment && docker compose up -d --build
 ```
 
-### 启动系统
+访问地址: http://localhost:8080
 
-#### 方式1: Web界面（推荐）
-```bash
-python main.py web
-# 或
-python main.py
-```
-访问: http://localhost:8502 (系统会自动分配可用端口)
-
-#### 方式2: 命令行界面
+### 命令行模式（核心引擎直连）
 ```bash
 # 显示命令行使用说明
 python main.py cli
@@ -231,14 +264,15 @@ print('预测号码:', result['prediction_result'].predicted_numbers)
 "
 ```
 
-#### 方式3: 快速演示
-```bash
-python main.py demo
-```
+### 部署指南（前后端分离）
+
+- **本地开发**: 分别启动 FastAPI（8000）和 Vue（dev 模式）
+- **容器部署**: 使用 `deployment/docker-compose.yml` 一键构建前后端
+- **生产访问**: 统一通过 Nginx 暴露 `http://localhost:8080`
 
 ## 📖 使用指南
 
-### Web界面使用
+### 前端 SPA 使用
 
 #### 1. 数据管理
 - **查看数据状态**: 总期数、最新期号、数据完整性
@@ -340,24 +374,21 @@ if result.get('comparison_result'):
 ## 📁 项目结构
 
 ```
-happy8/
-├── main.py                    # 主启动文件
-├── requirements.txt           # 依赖包列表
-├── README.md                 # 项目说明
-├── src/                      # 源代码目录
-│   ├── happy8_analyzer.py    # 核心分析器 (17种算法)
-│   ├── happy8_app.py         # Web界面
-│   ├── performance_optimizer.py  # 性能优化模块
-│   └── system_test_suite.py  # 系统测试套件
-├── data/                     # 数据目录
-│   └── happy8_data.csv       # 历史数据文件
-├── docs/                     # 文档目录
-│   ├── 用户使用指南.md        # 详细使用教程
-│   ├── 部署指南.md           # 部署说明
-│   ├── 项目总结.md           # 技术总结
-│   └── 高级预测功能开发任务文档.md  # 开发记录
-└── deployment/               # 部署配置
-    └── docker-compose.yml    # Docker部署配置
+Happy8/
+├── backend/           # FastAPI 后端 API
+│   ├── main.py       # API 入口
+│   ├── config.py     # 配置
+│   └── api/          # 路由和服务
+├── frontend/          # Vue 3 前端
+│   ├── src/          # 源码
+│   ├── package.json
+│   └── Dockerfile
+├── src/               # 核心预测引擎
+│   ├── happy8_analyzer.py
+│   └── batch_predictor.py
+├── data/              # 历史数据
+├── deployment/        # Docker 部署配置
+└── main.py           # CLI 入口
 ```
 
 ## 🔧 数据源说明
@@ -401,21 +432,19 @@ export REDIS_URL=redis://localhost:6379/0
 ```
 
 ### 配置文件
-系统自动生成 `deploy_config.json`，可自定义配置：
+推荐通过环境变量管理前后端配置（示例）：
 ```json
 {
-  "app": {
-    "port": 8501,
-    "host": "0.0.0.0"
+  "backend": {
+    "host": "0.0.0.0",
+    "port": 8000,
+    "cors_origins": [
+      "http://localhost:3000",
+      "http://localhost:8080"
+    ]
   },
-  "data": {
-    "auto_update": true,
-    "update_interval": 300,
-    "max_periods": 2000
-  },
-  "performance": {
-    "cache_enabled": true,
-    "parallel_processing": true
+  "frontend": {
+    "vite_api_base_url": "http://localhost:8000"
   }
 }
 ```
@@ -430,7 +459,7 @@ python src/system_test_suite.py
 # 运行性能测试
 python src/performance_optimizer.py
 
-# 测试Web界面启动
+# 运行CLI演示
 python main.py demo
 ```
 

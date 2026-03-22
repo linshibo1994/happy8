@@ -5,10 +5,10 @@
 Happy8 Prediction System - Main Entry Point
 
 统一的系统入口，支持多种启动方式：
-- Web界面模式: python main.py web
-- 命令行预测: python main.py predict
-- 批量测试: python main.py batch-test
-- 性能测试: python main.py performance-test
+- 命令行说明: python main.py cli
+- 演示运行: python main.py demo
+- 部署入口: python main.py deploy
+- 帮助信息: python main.py help
 
 作者: linshibo
 开发者: linshibo
@@ -17,7 +17,6 @@ Happy8 Prediction System - Main Entry Point
 最后更新: 2025-08-19
 """
 
-import os
 import sys
 import subprocess
 import argparse
@@ -25,23 +24,6 @@ from pathlib import Path
 
 # 添加src目录到Python路径
 sys.path.insert(0, str(Path(__file__).parent / "src"))
-
-def start_web_app():
-    """启动Web应用"""
-    print("🚀 启动快乐8预测系统Web界面...")
-    print("访问地址: http://localhost:8501")
-    print("按 Ctrl+C 停止服务")
-    
-    try:
-        subprocess.run([
-            sys.executable, "-m", "streamlit", "run", 
-            "src/happy8_app.py",
-            "--server.headless", "true"
-        ])
-    except KeyboardInterrupt:
-        print("\n👋 Web服务已停止")
-    except Exception as e:
-        print(f"❌ Web服务启动失败: {e}")
 
 def start_cli():
     """启动命令行界面"""
@@ -97,15 +79,13 @@ def show_help():
   python main.py [命令]
 
 可用命令:
-  web      启动Web界面 (默认)
   cli      显示命令行使用说明
   demo     运行系统演示
   deploy   部署系统
   help     显示此帮助信息
 
 示例:
-  python main.py          # 启动Web界面
-  python main.py web      # 启动Web界面
+  python main.py          # 显示命令行使用说明
   python main.py cli      # 显示命令行使用说明
   python main.py demo     # 运行演示
   python main.py deploy   # 部署系统
@@ -113,7 +93,7 @@ def show_help():
 🌟 系统特性:
   - 17种预测算法 (统计学+机器学习+深度学习+贝叶斯推理)
   - 智能模式切换 (历史验证+未来预测)
-  - Web界面 + 命令行双模式
+  - 命令行模式 + 可扩展后端服务
   - 完整的质量控制体系
 
 📚 更多信息请查看:
@@ -132,9 +112,9 @@ def main():
     parser.add_argument(
         'command', 
         nargs='?', 
-        default='web',
-        choices=['web', 'cli', 'demo', 'deploy', 'help'],
-        help='要执行的命令 (默认: web)'
+        default='cli',
+        choices=['cli', 'demo', 'deploy', 'help'],
+        help='要执行的命令 (默认: cli)'
     )
     
     args = parser.parse_args()
@@ -149,7 +129,7 @@ def main():
         return
 
     # 检查关键文件
-    required_files = ['src/happy8_analyzer.py', 'src/happy8_app.py']
+    required_files = ['src/happy8_analyzer.py']
     missing_files = [f for f in required_files if not Path(f).exists()]
 
     if missing_files:
@@ -158,9 +138,7 @@ def main():
         return
     
     # 执行对应命令
-    if args.command == 'web':
-        start_web_app()
-    elif args.command == 'cli':
+    if args.command == 'cli':
         start_cli()
     elif args.command == 'demo':
         run_demo()

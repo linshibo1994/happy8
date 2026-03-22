@@ -1,36 +1,41 @@
-version: '3.8'
-
 services:
-  happy8-app:
+  # 后端服务
+  backend:
     build:
       context: ..
       dockerfile: deployment/Dockerfile
-    ports:
-      - "8501:8501"
-    volumes:
-      - ../data:/app/data
-      - ../logs:/app/logs
+    container_name: happy8-backend
+    restart: unless-stopped
     environment:
       - PYTHONPATH=/app
       - TZ=Asia/Shanghai
-    restart: unless-stopped
+    volumes:
+      - ../data:/app/data
+      - ../logs:/app/logs
+    networks:
+      - happy8-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 40s
 
-  nginx:
-    image: nginx:alpine
+  # 前端服务
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    container_name: happy8-frontend
+    restart: unless-stopped
     ports:
       - "8080:80"
-    volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf:ro
     depends_on:
-      - happy8-app
-    restart: unless-stopped
+      backend:
+        condition: service_healthy
+    networks:
+      - happy8-network
 
-volumes:
-  data:
-  logs:
+networks:
+  happy8-network:
+    driver: bridge
