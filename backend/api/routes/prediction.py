@@ -44,6 +44,7 @@ class PredictionRequest(BaseModel):
     periods: int = Field(300, ge=10, le=5000, description="分析期数")
     count: int = Field(20, ge=1, le=30, description="生成号码数")
     target_issue: Optional[str] = Field(None, description="目标期号")
+    compare_issue: Optional[str] = Field(None, description="对比期号（不填则对比最新期号）")
 
 
 def _resolve_method(method: str) -> str:
@@ -76,9 +77,10 @@ def _next_issue_from_latest(analyzer: Any) -> str:
 
 
 def _build_cache_key(payload: PredictionRequest, resolved_method: str, target_issue: str) -> str:
+    compare_issue = payload.compare_issue or "latest"
     return (
         f"predict:{payload.method}:{resolved_method}:"
-        f"{payload.periods}:{payload.count}:{target_issue}"
+        f"{payload.periods}:{payload.count}:{target_issue}:{compare_issue}"
     )
 
 
@@ -99,6 +101,19 @@ def _execute_prediction(payload: PredictionRequest) -> Dict[str, Any]:
         count=payload.count,
         method=resolved_method,
     )
+    # 如果指定了对比期号，使用指定期号进行对比
+    if payload.compare_issue:
+        try:
+            comparison_result = analyzer.compare_results(
+                target_issue=payload.compare_issue,
+                predicted_numbers=smart_result["prediction_result"].predicted_numbers,
+                is_reference=True,
+            )
+            smart_result["comparison_result"] = comparison_result
+            smart_result["mode_description"] = f"预测结果对比指定期号 {payload.compare_issue}"
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"指定期号对比失败: {e}")
+
     response_data = format_prediction_result(
         smart_result=smart_result,
         request_method=payload.method,
@@ -128,8 +143,15 @@ async def predict_stream(
     periods: int = Query(300, ge=10, le=5000, description="分析期数"),
     count: int = Query(20, ge=1, le=30, description="生成号码数"),
     target_issue: Optional[str] = Query(None, description="目标期号"),
+    compare_issue: Optional[str] = Query(None, description="对比期号"),
 ) -> StreamingResponse:
-    payload = PredictionRequest(method=method, periods=periods, count=count, target_issue=target_issue)
+    payload = PredictionRequest(
+        method=method,
+        periods=periods,
+        count=count,
+        target_issue=target_issue,
+        compare_issue=compare_issue,
+    )
 
     async def event_generator():
         queue: "Queue[tuple[str, Dict[str, Any]]]" = Queue()

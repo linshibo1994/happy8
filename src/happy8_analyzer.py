@@ -2593,6 +2593,8 @@ class DataManager:
 
         # 保存数据
         combined_df.to_csv(self.data_file, index=False)
+        # 保存后自动清除缓存，确保下次读取获得最新数据
+        self._data_cache = None
         print(f"数据已保存到: {self.data_file}")
         print(f"总共保存 {len(combined_df)} 期数据（已去重和排序）")
     
@@ -5515,7 +5517,7 @@ class Happy8Analyzer:
     def crawl_latest_data(self, limit: int = 100) -> pd.DataFrame:
         """爬取最新数据"""
         try:
-            self.data_manager.crawl_initial_data(limit)
+            self.data_manager.crawl_latest_data(limit)
             # 重新加载数据
             self.historical_data = None
             return self.load_data()
@@ -5573,7 +5575,7 @@ class Happy8Analyzer:
         Returns:
             Dict包含:
             - prediction_result: PredictionResult对象
-            - comparison_result: ComparisonResult对象（仅历史验证模式）
+            - comparison_result: ComparisonResult对象（历史验证模式为准确验证，未来预测模式为参考对比最新期号）
             - mode: 'historical_validation' 或 'future_prediction'
             - mode_description: 模式描述
         """
@@ -5657,9 +5659,28 @@ class Happy8Analyzer:
             print(f"预测号码: {prediction_result.predicted_numbers}")
             print("💡 提示: 这是未来期号预测，无法进行准确性验证")
 
+            # 使用最新已知期号的实际结果作为参考，计算命中情况
+            comparison_result = None
+            latest_issue = None
+            try:
+                data = self.load_data(1)
+                if not data.empty:
+                    latest_issue = str(data.iloc[0]['issue'])
+                    comparison_result = self.compare_results(
+                        target_issue=latest_issue,
+                        predicted_numbers=prediction_result.predicted_numbers,
+                        is_reference=True
+                    )
+                    print(f"参考对比（最新期 {latest_issue}）: 命中 {comparison_result.hit_count} 个")
+            except Exception as e:
+                print(f"参考对比失败: {e}")
+
+            if comparison_result is not None and latest_issue is not None:
+                mode_description = f'未来预测模式：预测结果参考对比最新期号 {latest_issue}'
+
             return {
                 'prediction_result': prediction_result,
-                'comparison_result': None,
+                'comparison_result': comparison_result,
                 'mode': mode,
                 'mode_description': mode_description,
                 'success': True
@@ -5675,8 +5696,15 @@ class Happy8Analyzer:
     
     def compare_results(self, 
                        target_issue: str,
-                       predicted_numbers: List[int]) -> ComparisonResult:
-        """对比预测结果"""
+                       predicted_numbers: List[int],
+                       is_reference: bool = False) -> ComparisonResult:
+        """对比预测结果
+        
+        Args:
+            target_issue: 对比目标期号
+            predicted_numbers: 预测号码列表
+            is_reference: 是否为参考对比（不记录性能数据）
+        """
         
         # 获取开奖结果
         actual_result = self.data_manager.get_issue_result(target_issue)
@@ -5690,11 +5718,12 @@ class Happy8Analyzer:
             actual_numbers=actual_result.numbers
         )
         
-        # 更新性能记录
-        method = getattr(self, '_last_prediction_method', 'unknown')
-        self.performance_monitor.record_prediction(
-            method, 0, comparison.hit_rate
-        )
+        # 仅在非参考对比时更新性能记录，避免污染性能指标
+        if not is_reference:
+            method = getattr(self, '_last_prediction_method', 'unknown')
+            self.performance_monitor.record_prediction(
+                method, 0, comparison.hit_rate
+            )
         
         return comparison
     

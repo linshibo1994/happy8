@@ -34,6 +34,16 @@
                 <label>号码个数</label>
                 <input type="number" v-model.number="params.count" min="1" max="30" />
               </div>
+              <div class="form-item">
+                <label>对比期号</label>
+                <input
+                  type="text"
+                  v-model.trim="params.compareIssue"
+                  placeholder="留空则对比最新期号"
+                  maxlength="10"
+                />
+                <span class="form-hint">例如: 2026071</span>
+              </div>
               <div class="form-item checkbox">
                 <label>
                   <input type="checkbox" v-model="params.useGpu" />
@@ -98,6 +108,7 @@
                 </span>
               </div>
               <div class="result-meta">
+                <span v-if="result.compare_issue" class="compare-tag">对比期号: {{ result.compare_issue }}</span>
                 <span v-if="result.hit_count !== undefined">命中数：{{ result.hit_count }}</span>
                 <span v-if="result.hit_rate !== undefined">命中率：{{ ((result.hit_rate || 0) * 100).toFixed(1) }}%</span>
                 <span v-if="result.execution_time">耗时：{{ result.execution_time.toFixed(3) }}s</span>
@@ -359,11 +370,32 @@ onMounted(() => {
   color: var(--text-primary);
 }
 
+.form-item input[type='text'] {
+  width: 100%;
+  padding: 10px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  color: var(--text-primary);
+}
+
+.form-hint {
+  display: block;
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
 .form-item.checkbox label {
   display: flex;
   align-items: center;
   gap: 8px;
   cursor: pointer;
+}
+
+.compare-tag {
+  color: var(--color-primary);
+  font-weight: 500;
 }
 
 .action-buttons {

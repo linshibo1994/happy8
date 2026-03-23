@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from backend.config import METHOD_GROUPS, METHOD_MAPPING
+from backend.config import METHOD_DISPLAY_NAMES, METHOD_GROUPS, METHOD_MAPPING
 from backend.utils.formatter import build_response
 
 
@@ -17,7 +17,7 @@ async def get_methods() -> dict:
         for method in methods:
             item = {
                 "method": method,
-                "display_name": method,
+                "display_name": METHOD_DISPLAY_NAMES.get(method, method),
                 "mapped_function": METHOD_MAPPING.get(method),
                 "category": category,
             }
@@ -32,4 +32,3 @@ async def get_methods() -> dict:
         "total": len(flat),
     }
     return build_response(True, data, "获取算法列表成功")
-

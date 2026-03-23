@@ -44,6 +44,27 @@ METHOD_MAPPING: Dict[str, str] = {
 }
 
 
+METHOD_DISPLAY_NAMES: Dict[str, str] = {
+    "frequency": "频率分析",
+    "hot_cold": "冷热分析",
+    "missing": "遗漏分析",
+    "markov": "一阶马尔可夫",
+    "markov_2nd": "二阶马尔可夫",
+    "markov_3rd": "三阶马尔可夫",
+    "adaptive_markov": "自适应马尔可夫",
+    "transformer": "Transformer深度学习",
+    "gnn": "图神经网络",
+    "monte_carlo": "蒙特卡洛模拟",
+    "clustering": "聚类分析",
+    "advanced_ensemble": "高级集成学习",
+    "bayesian": "贝叶斯推断",
+    "super_predictor": "超级预测器",
+    "high_confidence": "高置信度预测",
+    "lstm": "LSTM神经网络",
+    "ensemble": "集成学习",
+}
+
+
 METHOD_GROUPS: Dict[str, List[str]] = {
     "统计类": ["frequency", "hot_cold", "missing"],
     "马尔可夫": ["markov", "markov_2nd", "markov_3rd", "adaptive_markov"],
@@ -51,4 +72,3 @@ METHOD_GROUPS: Dict[str, List[str]] = {
     "机器学习": ["monte_carlo", "clustering", "advanced_ensemble", "ensemble"],
     "智能综合": ["bayesian", "super_predictor", "high_confidence"],
 }
-

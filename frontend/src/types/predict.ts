@@ -16,6 +16,7 @@ export interface PredictParams {
   useGpu?: boolean
   parallel?: boolean
   explain?: boolean
+  compareIssue?: string
 }
 
 // 预测结果（快乐8）
@@ -30,6 +31,7 @@ export interface PredictResult {
   hit_numbers?: number[]
   hit_count?: number
   hit_rate?: number
+  compare_issue?: string
   created_at?: string
 }
 

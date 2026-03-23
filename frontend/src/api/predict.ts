@@ -126,6 +126,9 @@ export const createPredictStream = (params: PredictParams): EventSource => {
     periods: String(params.periods || 100),
     count: String(params.count || 1),
   })
+  if (params.compareIssue) {
+    searchParams.set('compare_issue', params.compareIssue)
+  }
   const baseUrl = getApiBaseUrl()
   const url = `${baseUrl}${API_PREFIX}/predict/stream?${searchParams.toString()}`
   return new EventSource(url)

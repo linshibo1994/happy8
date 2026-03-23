@@ -20,6 +20,7 @@ export const usePredictStore = defineStore('predict', () => {
     useGpu: true,
     parallel: true,
     explain: true,
+    compareIssue: '',
   })
 
   const isPredicting = ref(false)
@@ -82,9 +83,11 @@ export const usePredictStore = defineStore('predict', () => {
   const normalizeResultItem = (item: Record<string, unknown>, method: string, fallbackConfidence: number): PredictResult => {
     const numbers = toNumberList(item.numbers) || toNumberList(item.predicted_numbers)
     const confidence = Number(item.confidence ?? item.confidence_score ?? fallbackConfidence ?? 0)
-    const hitNumbers = toNumberList(item.hit_numbers)
-    const hitCountRaw = Number(item.hit_count ?? hitNumbers.length)
-    const hitRateRaw = Number(item.hit_rate ?? (numbers.length > 0 ? hitCountRaw / numbers.length : 0))
+    // 优先从 comparison 嵌套对象中提取命中数据，兼容顶层字段
+    const comparison = (item.comparison && typeof item.comparison === 'object') ? item.comparison as Record<string, unknown> : null
+    const hitNumbers = toNumberList(comparison?.hit_numbers ?? item.hit_numbers)
+    const hitCountRaw = Number(comparison?.hit_count ?? item.hit_count ?? hitNumbers.length)
+    const hitRateRaw = Number(comparison?.hit_rate ?? item.hit_rate ?? (numbers.length > 0 ? hitCountRaw / numbers.length : 0))
 
     return {
       method: String(item.algorithm || item.method || method),
@@ -96,6 +99,7 @@ export const usePredictStore = defineStore('predict', () => {
       hit_numbers: hitNumbers,
       hit_count: Number.isFinite(hitCountRaw) ? hitCountRaw : 0,
       hit_rate: Number.isFinite(hitRateRaw) ? hitRateRaw : 0,
+      compare_issue: comparison?.target_issue ? String(comparison.target_issue) : undefined,
     }
   }
 
