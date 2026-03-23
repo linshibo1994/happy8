@@ -1,7 +1,7 @@
 <template>
   <div
     class="lottery-ball"
-    :class="[`ball-${size}`, { 'ball-animate': animate }]"
+    :class="[`ball-${size}`, { 'ball-animate': animate, 'ball-hit': hit, 'ball-miss': miss }]"
     :style="{ animationDelay: `${delay}ms` }"
   >
     <span class="ball-highlight"></span>
@@ -17,12 +17,16 @@ interface Props {
   size?: 'sm' | 'md' | 'lg'
   animate?: boolean
   delay?: number
+  hit?: boolean
+  miss?: boolean
 }
 
 withDefaults(defineProps<Props>(), {
   size: 'md',
   animate: false,
-  delay: 0
+  delay: 0,
+  hit: false,
+  miss: false,
 })
 </script>
 
@@ -89,6 +93,20 @@ withDefaults(defineProps<Props>(), {
   position: relative;
   z-index: 1;
   text-shadow: 0 2px 4px rgba(0, 0, 0, 0.35);
+}
+
+.ball-hit {
+  background: radial-gradient(circle at 30% 28%, #ffe08a 0%, #ffcc00 28%, #f5a623 62%, #d4880f 100%);
+  box-shadow:
+    inset 0 8px 10px rgba(255, 255, 255, 0.25),
+    inset 0 -8px 14px rgba(0, 0, 0, 0.3),
+    0 8px 16px rgba(0, 0, 0, 0.4),
+    0 0 18px rgba(255, 204, 0, 0.5);
+  transform: scale(1.08);
+}
+
+.ball-miss {
+  opacity: 0.45;
 }
 
 .ball-animate {

@@ -113,6 +113,7 @@
                 <span v-if="result.hit_rate !== undefined">命中率：{{ ((result.hit_rate || 0) * 100).toFixed(1) }}%</span>
                 <span v-if="result.execution_time">耗时：{{ result.execution_time.toFixed(3) }}s</span>
               </div>
+              <div class="result-balls-label">预测号码</div>
               <div class="result-balls">
                 <LotteryBall
                   v-for="(num, i) in result.numbers"
@@ -121,8 +122,22 @@
                   size="md"
                   :animate="true"
                   :delay="i * 80"
+                  :hit="result.hit_numbers?.includes(num) ?? false"
+                  :miss="(result.hit_numbers?.length ?? 0) > 0 && !result.hit_numbers?.includes(num)"
                 />
               </div>
+              <template v-if="result.actual_numbers && result.actual_numbers.length > 0">
+                <div class="result-balls-label actual-label">开奖号码 ({{ result.compare_issue }})</div>
+                <div class="result-balls">
+                  <LotteryBall
+                    v-for="(num, i) in result.actual_numbers"
+                    :key="'a-' + i"
+                    :number="num"
+                    size="sm"
+                    :hit="result.hit_numbers?.includes(num) ?? false"
+                  />
+                </div>
+              </template>
             </div>
           </div>
         </DataVBorder>
@@ -464,6 +479,19 @@ onMounted(() => {
   font-size: 12px;
   color: var(--text-secondary);
   margin-bottom: 10px;
+}
+
+.result-balls-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+  margin-top: 4px;
+}
+
+.result-balls-label.actual-label {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--border-color);
 }
 
 .result-balls {

@@ -32,6 +32,7 @@ export interface PredictResult {
   hit_count?: number
   hit_rate?: number
   compare_issue?: string
+  actual_numbers?: number[]
   created_at?: string
 }
 

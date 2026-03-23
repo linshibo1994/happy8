@@ -100,6 +100,7 @@ export const usePredictStore = defineStore('predict', () => {
       hit_count: Number.isFinite(hitCountRaw) ? hitCountRaw : 0,
       hit_rate: Number.isFinite(hitRateRaw) ? hitRateRaw : 0,
       compare_issue: comparison?.target_issue ? String(comparison.target_issue) : undefined,
+      actual_numbers: toNumberList(comparison?.actual_numbers),
     }
   }
 
