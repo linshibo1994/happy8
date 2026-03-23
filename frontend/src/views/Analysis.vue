@@ -1,46 +1,45 @@
 <template>
   <div class="analysis-page">
-    <!-- 加载状态 -->
-    <div v-if="loading"
-         class="loading-overlay"
-         role="status"
-         aria-live="polite"
-         aria-label="正在加载分析数据">
+    <div
+      v-if="loading"
+      class="loading-overlay"
+      role="status"
+      aria-live="polite"
+      aria-label="正在加载分析数据"
+    >
       <div class="loading-spinner" aria-hidden="true"></div>
       <span class="loading-text">正在加载分析数据...</span>
     </div>
 
     <div class="analysis-grid" :class="{ 'is-loading': loading }">
-      <!-- 频率分析 -->
       <DataVBorder :type="1">
         <div class="chart-section">
-          <h3 class="section-title">红球频率分析</h3>
-          <div class="chart-container" ref="redChartRef"></div>
+          <h3 class="section-title">号码频率分析（01-80）</h3>
+          <div class="chart-container" ref="frequencyChartRef"></div>
         </div>
       </DataVBorder>
 
       <DataVBorder :type="1">
         <div class="chart-section">
-          <h3 class="section-title">蓝球频率分析</h3>
-          <div class="chart-container" ref="blueChartRef"></div>
+          <h3 class="section-title">冷热号码分布（Top10）</h3>
+          <div class="chart-container" ref="hotColdChartRef"></div>
         </div>
       </DataVBorder>
 
       <DataVBorder :type="1" class="full-width">
         <div class="chart-section">
-          <h3 class="section-title">走势分析（红球和值）</h3>
+          <h3 class="section-title">走势分析（和值）</h3>
           <div class="chart-container trend-chart" ref="trendChartRef"></div>
         </div>
       </DataVBorder>
 
-      <!-- 冷热号分析 -->
       <DataVBorder :type="2">
         <div class="stats-section">
           <h3 class="section-title">热门号码</h3>
           <div class="number-list hot">
             <div v-for="num in hotNumbers" :key="'hot-' + num" class="number-item">
-              <LotteryBall :number="num" type="red" size="sm" />
-              <span class="number-count">{{ getCount(num) }}次</span>
+              <LotteryBall :number="num" size="sm" />
+              <span class="number-count">{{ getCount(num) }} 次</span>
             </div>
           </div>
         </div>
@@ -51,21 +50,20 @@
           <h3 class="section-title">冷门号码</h3>
           <div class="number-list cold">
             <div v-for="num in coldNumbers" :key="'cold-' + num" class="number-item">
-              <LotteryBall :number="num" type="red" size="sm" />
-              <span class="number-count">{{ getCount(num) }}次</span>
+              <LotteryBall :number="num" size="sm" />
+              <span class="number-count">{{ getCount(num) }} 次</span>
             </div>
           </div>
         </div>
       </DataVBorder>
 
-      <!-- 遗漏分析 -->
       <DataVBorder :type="1" class="full-width">
         <div class="omission-section">
-          <h3 class="section-title">遗漏值统计</h3>
+          <h3 class="section-title">遗漏值统计（01-80）</h3>
           <div class="omission-grid">
-            <div v-for="n in 33" :key="'o-' + n" class="omission-item">
-              <LotteryBall :number="n" type="red" size="sm" />
-              <span class="omission-value">{{ getOmission(n) }}</span>
+            <div v-for="num in numberPool" :key="'o-' + num" class="omission-item">
+              <LotteryBall :number="num" size="sm" />
+              <span class="omission-value">{{ getOmission(num) }}</span>
             </div>
           </div>
         </div>
@@ -83,20 +81,20 @@ import LotteryBall from '@/components/common/LotteryBall.vue'
 import { getFrequencyAnalysis, getHotColdAnalysis, getMissingAnalysis, getTrendsAnalysis } from '@/api/lottery'
 import type { HotColdAnalysisResult, MissingAnalysisResult, TrendPoint } from '@/types/lottery'
 
-const redChartRef = ref<HTMLElement | null>(null)
-const blueChartRef = ref<HTMLElement | null>(null)
+const frequencyChartRef = ref<HTMLElement | null>(null)
+const hotColdChartRef = ref<HTMLElement | null>(null)
 const trendChartRef = ref<HTMLElement | null>(null)
 
-let redChart: echarts.ECharts | null = null
-let blueChart: echarts.ECharts | null = null
+let frequencyChart: echarts.ECharts | null = null
+let hotColdChart: echarts.ECharts | null = null
 let trendChart: echarts.ECharts | null = null
+
 const appStore = useAppStore()
 
-// 数据状态
+const numberPool = Array.from({ length: 80 }, (_, idx) => idx + 1)
 const hotNumbers = ref<number[]>([])
 const coldNumbers = ref<number[]>([])
 const frequencyData = ref<Record<number, number>>({})
-const blueFrequencyData = ref<Record<number, number>>({})
 const omissionData = ref<Record<number, number>>({})
 const trendData = ref<TrendPoint[]>([])
 const loading = ref(true)
@@ -104,34 +102,32 @@ const loading = ref(true)
 const getCount = (num: number) => frequencyData.value[num] || 0
 const getOmission = (num: number) => omissionData.value[num] || 0
 
-// 加载频率分析数据
 const loadFrequencyData = async () => {
   try {
     const res = await getFrequencyAnalysis({ periods: 100 })
     if (res.success && res.data) {
-      frequencyData.value = res.data.red_frequency || {}
-      blueFrequencyData.value = res.data.blue_frequency || {}
+      frequencyData.value = res.data.frequency || {}
       return
     }
     frequencyData.value = {}
-    blueFrequencyData.value = {}
     appStore.notify.warning('频率分析接口返回空数据')
   } catch (error) {
     console.error('加载频率数据失败:', error)
     frequencyData.value = {}
-    blueFrequencyData.value = {}
     appStore.notify.error('加载频率数据失败')
   }
 }
 
-// 加载冷热号数据
 const loadHotColdData = async () => {
   try {
-    const res = await getHotColdAnalysis(50)
+    const res = await getHotColdAnalysis(100)
     if (res.success && res.data) {
       const data = res.data as HotColdAnalysisResult
-      hotNumbers.value = data.red_balls?.hot || []
-      coldNumbers.value = data.red_balls?.cold || []
+      hotNumbers.value = data.hot_numbers || []
+      coldNumbers.value = data.cold_numbers || []
+      if (data.frequency) {
+        frequencyData.value = { ...frequencyData.value, ...data.frequency }
+      }
       return
     }
     hotNumbers.value = []
@@ -145,13 +141,12 @@ const loadHotColdData = async () => {
   }
 }
 
-// 加载遗漏值数据
 const loadMissingData = async () => {
   try {
     const res = await getMissingAnalysis(100)
     if (res.success && res.data) {
       const data = res.data as MissingAnalysisResult
-      omissionData.value = data.red_missing || {}
+      omissionData.value = data.missing_map || {}
       return
     }
     omissionData.value = {}
@@ -163,7 +158,6 @@ const loadMissingData = async () => {
   }
 }
 
-// 加载走势数据
 const loadTrendData = async () => {
   try {
     const res = await getTrendsAnalysis({ periods: 100 })
@@ -180,17 +174,16 @@ const loadTrendData = async () => {
   }
 }
 
-// 初始化图表
 const initCharts = () => {
-  // 红球频率图表
-  if (redChartRef.value) {
-    redChart = echarts.init(redChartRef.value)
-    const redData = Array.from({ length: 33 }, (_, i) => ({
-      name: String(i + 1).padStart(2, '0'),
-      value: frequencyData.value[i + 1] || 0
-    }))
+  frequencyChart?.dispose()
+  hotColdChart?.dispose()
+  trendChart?.dispose()
 
-    redChart.setOption({
+  if (frequencyChartRef.value) {
+    frequencyChart = echarts.init(frequencyChartRef.value)
+    const frequencyValues = numberPool.map((num) => frequencyData.value[num] || 0)
+
+    frequencyChart.setOption({
       backgroundColor: 'transparent',
       tooltip: {
         trigger: 'axis',
@@ -198,11 +191,12 @@ const initCharts = () => {
         borderColor: 'var(--border-color)',
         textStyle: { color: '#fff' }
       },
+      grid: { left: 40, right: 20, top: 20, bottom: 40 },
       xAxis: {
         type: 'category',
-        data: redData.map(d => d.name),
+        data: numberPool.map((num) => String(num).padStart(2, '0')),
         axisLine: { lineStyle: { color: 'rgba(0, 212, 255, 0.3)' } },
-        axisLabel: { color: '#a0aec0' }
+        axisLabel: { color: '#a0aec0', interval: 7 }
       },
       yAxis: {
         type: 'value',
@@ -212,26 +206,28 @@ const initCharts = () => {
       },
       series: [{
         type: 'bar',
-        data: redData.map(d => d.value),
+        data: frequencyValues,
+        barWidth: '72%',
         itemStyle: {
           color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-            { offset: 0, color: '#ff8a8a' },
-            { offset: 1, color: '#ff6b6b' }
+            { offset: 0, color: '#00d4ff' },
+            { offset: 1, color: '#4ecdc4' }
           ])
         }
       }]
     })
   }
 
-  // 蓝球频率图表
-  if (blueChartRef.value) {
-    blueChart = echarts.init(blueChartRef.value)
-    const blueData = Array.from({ length: 16 }, (_, i) => ({
-      name: String(i + 1).padStart(2, '0'),
-      value: blueFrequencyData.value[i + 1] || 0
-    }))
+  if (hotColdChartRef.value) {
+    hotColdChart = echarts.init(hotColdChartRef.value)
 
-    blueChart.setOption({
+    const hotSet = new Set(hotNumbers.value)
+    const coldSet = new Set(coldNumbers.value)
+
+    const hotSeries = numberPool.map((num) => (hotSet.has(num) ? (frequencyData.value[num] || 0) : 0))
+    const coldSeries = numberPool.map((num) => (coldSet.has(num) ? (frequencyData.value[num] || 0) : 0))
+
+    hotColdChart.setOption({
       backgroundColor: 'transparent',
       tooltip: {
         trigger: 'axis',
@@ -239,11 +235,17 @@ const initCharts = () => {
         borderColor: 'var(--border-color)',
         textStyle: { color: '#fff' }
       },
+      legend: {
+        data: ['热门号码', '冷门号码'],
+        top: 8,
+        textStyle: { color: '#a0aec0' }
+      },
+      grid: { left: 40, right: 20, top: 46, bottom: 40 },
       xAxis: {
         type: 'category',
-        data: blueData.map(d => d.name),
+        data: numberPool.map((num) => String(num).padStart(2, '0')),
         axisLine: { lineStyle: { color: 'rgba(0, 212, 255, 0.3)' } },
-        axisLabel: { color: '#a0aec0' }
+        axisLabel: { color: '#a0aec0', interval: 7 }
       },
       yAxis: {
         type: 'value',
@@ -251,16 +253,24 @@ const initCharts = () => {
         splitLine: { lineStyle: { color: 'rgba(0, 212, 255, 0.1)' } },
         axisLabel: { color: '#a0aec0' }
       },
-      series: [{
-        type: 'bar',
-        data: blueData.map(d => d.value),
-        itemStyle: {
-          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-            { offset: 0, color: '#6ee7e7' },
-            { offset: 1, color: '#4ecdc4' }
-          ])
+      series: [
+        {
+          name: '热门号码',
+          type: 'line',
+          smooth: true,
+          data: hotSeries,
+          lineStyle: { color: '#ff6b6b', width: 2 },
+          itemStyle: { color: '#ff6b6b' },
+        },
+        {
+          name: '冷门号码',
+          type: 'line',
+          smooth: true,
+          data: coldSeries,
+          lineStyle: { color: '#ffd93d', width: 2 },
+          itemStyle: { color: '#ffd93d' },
         }
-      }]
+      ]
     })
   }
 
@@ -290,7 +300,7 @@ const initCharts = () => {
       series: [{
         type: 'line',
         smooth: true,
-        data: chartPoints.map((item) => item.red_sum),
+        data: chartPoints.map((item) => item.sum_value),
         lineStyle: { color: '#ffd93d', width: 2 },
         itemStyle: { color: '#ffd93d' },
         areaStyle: {
@@ -305,20 +315,14 @@ const initCharts = () => {
 }
 
 const handleResize = () => {
-  redChart?.resize()
-  blueChart?.resize()
+  frequencyChart?.resize()
+  hotColdChart?.resize()
   trendChart?.resize()
 }
 
-// 加载所有数据
 const loadAllData = async () => {
   loading.value = true
-  await Promise.all([
-    loadFrequencyData(),
-    loadHotColdData(),
-    loadMissingData(),
-    loadTrendData()
-  ])
+  await Promise.all([loadFrequencyData(), loadHotColdData(), loadMissingData(), loadTrendData()])
   loading.value = false
   initCharts()
 }
@@ -330,8 +334,8 @@ onMounted(() => {
 
 onUnmounted(() => {
   window.removeEventListener('resize', handleResize)
-  redChart?.dispose()
-  blueChart?.dispose()
+  frequencyChart?.dispose()
+  hotColdChart?.dispose()
   trendChart?.dispose()
 })
 </script>
@@ -438,7 +442,7 @@ onUnmounted(() => {
 
 .omission-grid {
   display: grid;
-  grid-template-columns: repeat(11, 1fr);
+  grid-template-columns: repeat(10, 1fr);
   gap: 12px;
 }
 
@@ -460,7 +464,7 @@ onUnmounted(() => {
   }
 
   .omission-grid {
-    grid-template-columns: repeat(6, 1fr);
+    grid-template-columns: repeat(5, 1fr);
   }
 }
 </style>

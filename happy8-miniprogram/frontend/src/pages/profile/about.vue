@@ -4,7 +4,7 @@
     <view class="logo-section">
       <view class="container">
         <view class="logo-card">
-          <image class="app-logo" src="/static/images/logo.png" mode="aspectFit" />
+          <image class="app-logo" :src="appLogo" mode="aspectFit" />
           <text class="app-name">Happy8智能预测</text>
           <text class="app-version">v{{ appVersion }}</text>
           <text class="app-slogan">专业的快乐8号码预测平台</text>
@@ -174,6 +174,7 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
+import appLogo from '@/static/images/logo.png'
 
 const appVersion = ref('1.0.0')
 

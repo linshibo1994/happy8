@@ -47,13 +47,13 @@ export const useLotteryStore = defineStore('lottery', () => {
     try {
       const res = await getHistoryData({ periods })
       if (res.success && res.data) {
-        // 后端直接返回数组，或者 { data: [...], total: number }
         if (Array.isArray(res.data)) {
           historyData.value = res.data
-          totalPeriods.value = res.data.length
+          totalPeriods.value = res.total || res.data.length
         } else {
-          historyData.value = res.data.data || []
-          totalPeriods.value = res.data.total || 0
+          const nested = (res.data as unknown as { data?: HistoryItem[]; total?: number }) || {}
+          historyData.value = nested.data || []
+          totalPeriods.value = nested.total || 0
         }
       }
     } catch (error) {

@@ -1,33 +1,25 @@
 <template>
   <div class="comparison-page">
-    <!-- 配置面板 -->
     <DataVBorder :type="1">
       <div class="page-content">
         <div class="page-header">
           <h2 class="page-title">批量对比</h2>
-          <div class="header-actions">
-            <button
-              class="btn-export"
-              @click="store.exportJSON()"
-              :disabled="store.roundResults.length === 0"
-            >
-              导出 JSON
-            </button>
-          </div>
+          <button
+            class="btn-export"
+            @click="store.exportJSON()"
+            :disabled="store.roundResults.length === 0"
+          >
+            导出 JSON
+          </button>
         </div>
 
-        <!-- 配置区域 -->
         <div class="config-panel">
           <div class="config-row">
             <div class="config-item">
               <label>目标期号</label>
               <select v-model="store.params.target_issue" :disabled="store.isComparing">
                 <option value="" disabled>请选择期号</option>
-                <option
-                  v-for="issue in store.availableIssues"
-                  :key="issue"
-                  :value="issue"
-                >
+                <option v-for="issue in store.availableIssues" :key="issue" :value="issue">
                   {{ issue }}
                 </option>
               </select>
@@ -40,11 +32,7 @@
                   :key="category"
                   :label="category"
                 >
-                  <option
-                    v-for="method in methods"
-                    :key="method.value"
-                    :value="method.value"
-                  >
+                  <option v-for="method in methods" :key="method.value" :value="method.value">
                     {{ method.label }}
                   </option>
                 </optgroup>
@@ -83,6 +71,7 @@
               </label>
             </div>
           </div>
+
           <div class="config-actions">
             <button
               class="btn-primary"
@@ -91,186 +80,151 @@
             >
               {{ store.isComparing ? '对比中...' : '开始对比' }}
             </button>
-            <button
-              class="btn-secondary"
-              @click="store.reset()"
-              :disabled="store.isComparing"
-            >
+            <button class="btn-secondary" @click="store.reset()" :disabled="store.isComparing">
               重置
             </button>
-            <button
-              v-if="store.isComparing"
-              class="btn-danger"
-              @click="store.stopCompare()"
-            >
+            <button v-if="store.isComparing" class="btn-danger" @click="store.stopCompare()">
               停止
             </button>
           </div>
         </div>
 
-        <!-- 进度条 -->
         <div v-if="store.isComparing || store.progress > 0" class="progress-section">
           <div class="progress-header">
             <span>对比进度</span>
-            <span>{{ store.currentRound }} / {{ store.params.comparison_times }} 轮 ({{ Math.round(store.progress) }}%)</span>
+            <span>
+              {{ store.currentRound }} / {{ store.params.comparison_times }} 轮
+              ({{ Math.round(store.progress) }}%)
+            </span>
           </div>
           <div class="progress-bar">
             <div class="progress-fill" :style="{ width: store.progress + '%' }"></div>
           </div>
         </div>
 
-        <!-- 错误提示 -->
-        <div v-if="store.error" class="error-banner">
-          {{ store.error }}
-        </div>
+        <div v-if="store.error" class="error-banner">{{ store.error }}</div>
       </div>
     </DataVBorder>
 
-    <!-- 统计卡片 -->
     <div v-if="store.roundResults.length > 0" class="stats-grid">
       <div class="stat-card">
         <div class="stat-value">{{ store.roundResults.length }}</div>
-        <div class="stat-label">对比次数</div>
+        <div class="stat-label">对比轮次</div>
       </div>
       <div class="stat-card">
         <div class="stat-value">{{ successCount }}</div>
         <div class="stat-label">成功预测</div>
       </div>
       <div class="stat-card">
-        <div class="stat-value highlight-win">{{ store.winningRounds.length }}</div>
-        <div class="stat-label">中奖次数</div>
+        <div class="stat-value highlight-rate">{{ store.averageHitCount.toFixed(2) }}</div>
+        <div class="stat-label">平均命中数</div>
       </div>
       <div class="stat-card">
-        <div class="stat-value highlight-rate">{{ store.winRate.toFixed(1) }}%</div>
-        <div class="stat-label">中奖率</div>
+        <div class="stat-value highlight-win">{{ store.bestHitCount }}</div>
+        <div class="stat-label">最高命中数</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">{{ store.positiveHitRate.toFixed(1) }}%</div>
+        <div class="stat-label">命中轮次占比</div>
       </div>
     </div>
 
-    <!-- 中奖记录 -->
-    <DataVBorder v-if="store.winningRounds.length > 0" :type="1">
+    <DataVBorder v-if="store.hitRounds.length > 0" :type="1">
       <div class="page-content">
-        <h3 class="section-title">中奖记录</h3>
+        <h3 class="section-title">高命中记录（Top 10）</h3>
         <div class="winning-records">
-          <div
-            v-for="record in store.winningRounds"
-            :key="'win-' + record.round"
-            class="winning-record"
-          >
+          <div v-for="record in topHitRounds" :key="'hit-' + record.round" class="winning-record">
             <div class="record-header">
               <span class="record-round">第 {{ record.round }} 轮</span>
-              <span class="record-prize" :class="'prize-' + record.prize_level">
-                {{ record.prize_name }}
-              </span>
+              <span class="record-hit">命中 {{ record.hit_count }} 个 ({{ formatRate(record.hit_rate) }})</span>
             </div>
-            <div v-if="record.predicted_reds" class="record-balls">
+            <div class="record-balls">
               <span class="record-label">预测:</span>
               <div class="balls-row">
-                <LotteryBall
-                  v-for="(num, i) in record.predicted_reds"
-                  :key="'pr-' + i"
-                  :number="num"
-                  :type="isRedHit(num) ? 'red' : 'gray'"
-                  size="sm"
-                />
-                <LotteryBall
-                  v-if="record.predicted_blue !== null && record.predicted_blue !== undefined"
-                  :number="record.predicted_blue"
-                  :type="record.blue_match ? 'blue' : 'gray'"
-                  size="sm"
-                />
+                <span
+                  v-for="(num, i) in record.predicted_numbers"
+                  :key="'pr-' + record.round + '-' + i"
+                  class="ball-wrap"
+                  :class="{ 'is-hit': record.hit_numbers.includes(num) }"
+                >
+                  <LotteryBall :number="num" size="sm" />
+                </span>
               </div>
             </div>
             <div class="record-info">
-              <span>红球命中: {{ record.red_matches }}/6</span>
-              <span>蓝球: {{ record.blue_match ? '命中' : '未中' }}</span>
+              <span>分析期数: {{ record.analysis_periods }}</span>
+              <span>命中号码: {{ formatNumbers(record.hit_numbers) }}</span>
             </div>
           </div>
         </div>
       </div>
     </DataVBorder>
 
-    <!-- 奖级分布图 -->
     <DataVBorder v-show="store.roundResults.length > 0" :type="1">
       <div class="page-content">
-        <h3 class="section-title">奖级分布</h3>
+        <h3 class="section-title">命中数量分布</h3>
         <div ref="chartRef" class="chart-container"></div>
       </div>
     </DataVBorder>
 
-    <!-- 详细结果表格 -->
     <DataVBorder v-if="store.roundResults.length > 0" :type="1">
       <div class="page-content">
         <h3 class="section-title">详细结果 ({{ store.roundResults.length }} 条)</h3>
+
+        <div v-if="store.finalResult?.actual_result?.numbers?.length" class="actual-result">
+          <span class="actual-label">目标期开奖号码:</span>
+          <div class="balls-row balls-row-compact">
+            <span
+              v-for="(num, i) in store.finalResult.actual_result.numbers"
+              :key="'actual-' + i"
+              class="ball-wrap is-actual"
+            >
+              <LotteryBall :number="num" size="sm" />
+            </span>
+          </div>
+        </div>
+
         <div class="table-container">
           <table class="data-table">
             <thead>
               <tr>
                 <th>轮次</th>
                 <th>分析期数</th>
-                <th>预测红球</th>
-                <th>预测蓝球</th>
-                <th>红球命中</th>
-                <th>蓝球匹配</th>
-                <th>中奖等级</th>
+                <th>预测号码</th>
+                <th>命中号码</th>
+                <th>命中数</th>
+                <th>命中率</th>
               </tr>
             </thead>
             <tbody>
-              <tr
-                v-for="result in paginatedResults"
-                :key="result.round"
-                :class="{ 'row-winning': result.prize_level > 0 && result.prize_level <= 6 }"
-              >
+              <tr v-for="result in paginatedResults" :key="result.round" :class="{ 'row-winning': result.hit_count > 0 }">
                 <td>{{ result.round }}</td>
                 <td>{{ result.analysis_periods }}</td>
                 <td class="balls-cell">
-                  <div v-if="result.predicted_reds" class="balls-row balls-row-compact">
-                    <LotteryBall
-                      v-for="(num, i) in result.predicted_reds"
+                  <div v-if="result.predicted_numbers.length > 0" class="balls-row balls-row-compact">
+                    <span
+                      v-for="(num, i) in result.predicted_numbers"
                       :key="'tr-' + result.round + '-' + i"
-                      :number="num"
-                      :type="isRedHit(num) ? 'red' : 'gray'"
-                      size="sm"
-                    />
+                      class="ball-wrap"
+                      :class="{ 'is-hit': result.hit_numbers.includes(num) }"
+                    >
+                      <LotteryBall :number="num" size="sm" />
+                    </span>
                   </div>
                   <span v-else class="text-muted">-</span>
                 </td>
-                <td class="balls-cell">
-                  <LotteryBall
-                    v-if="result.predicted_blue !== null"
-                    :number="result.predicted_blue"
-                    :type="result.blue_match ? 'blue' : 'gray'"
-                    size="sm"
-                  />
-                  <span v-else class="text-muted">-</span>
-                </td>
-                <td>{{ result.success ? result.red_matches + '/6' : '-' }}</td>
-                <td>
-                  <span v-if="result.success" :class="result.blue_match ? 'text-success' : 'text-muted'">
-                    {{ result.blue_match ? '命中' : '未中' }}
-                  </span>
-                  <span v-else class="text-muted">-</span>
-                </td>
-                <td>
-                  <span :class="'prize-tag prize-' + result.prize_level">
-                    {{ result.prize_name }}
-                  </span>
-                </td>
+                <td>{{ formatNumbers(result.hit_numbers) }}</td>
+                <td>{{ result.success ? result.hit_count : '-' }}</td>
+                <td>{{ result.success ? formatRate(result.hit_rate) : '-' }}</td>
               </tr>
             </tbody>
           </table>
         </div>
 
-        <!-- 分页 -->
         <div class="pagination" v-if="totalPages > 1">
-          <button class="page-btn" :disabled="currentPage <= 1" @click="currentPage--">
-            上一页
-          </button>
-          <span class="page-info">
-            第 {{ currentPage }} / {{ totalPages }} 页
-          </span>
-          <button class="page-btn" :disabled="currentPage >= totalPages" @click="currentPage++">
-            下一页
-          </button>
+          <button class="page-btn" :disabled="currentPage <= 1" @click="currentPage--">上一页</button>
+          <span class="page-info">第 {{ currentPage }} / {{ totalPages }} 页</span>
+          <button class="page-btn" :disabled="currentPage >= totalPages" @click="currentPage++">下一页</button>
         </div>
       </div>
     </DataVBorder>
@@ -286,11 +240,9 @@ import LotteryBall from '@/components/common/LotteryBall.vue'
 
 const store = useComparisonStore()
 
-// 图表引用
 const chartRef = ref<HTMLElement | null>(null)
 let chartInstance: echarts.ECharts | null = null
 
-// 分页
 const currentPage = ref(1)
 const pageSize = 20
 
@@ -301,28 +253,14 @@ const paginatedResults = computed(() => {
   return store.roundResults.slice(start, start + pageSize)
 })
 
-// 成功预测数
-const successCount = computed(() =>
-  store.roundResults.filter(r => r.success).length
-)
+const successCount = computed(() => store.roundResults.filter((row) => row.success).length)
 
-// 实际开奖红球集合（用于高亮命中号码）
-const actualRedSet = computed(() => {
-  if (store.finalResult?.actual_result) {
-    return new Set(store.finalResult.actual_result.red_balls)
-  }
-  return new Set<number>()
-})
+const topHitRounds = computed(() => store.hitRounds.slice(0, 10))
 
-// 判断红球是否命中
-const isRedHit = (num: number) => actualRedSet.value.has(num)
-
-// 切换期数模式
 const togglePeriodsMode = () => {
   store.params.periods_mode = store.params.periods_mode === 'fixed' ? 'random' : 'fixed'
 }
 
-// 开始对比
 const handleStart = () => {
   const validationError = store.validateParams()
   if (validationError) {
@@ -333,24 +271,25 @@ const handleStart = () => {
   store.startCompare()
 }
 
-// 奖级分布图表数据
-const prizeDistribution = computed(() => {
-  const dist: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 0: 0 }
-  for (const r of store.roundResults) {
-    if (r.prize_level in dist) {
-      dist[r.prize_level]++
-    }
+const formatNumbers = (numbers: number[]) => {
+  if (!numbers || numbers.length === 0) return '-'
+  return numbers.map((num) => String(num).padStart(2, '0')).join(', ')
+}
+
+const formatRate = (rate: number) => `${(rate * 100).toFixed(1)}%`
+
+const hitCountDistribution = computed(() => {
+  const dist: Record<number, number> = {}
+  for (let i = 0; i <= 20; i++) {
+    dist[i] = 0
+  }
+  for (const row of store.roundResults) {
+    const hitCount = Math.min(20, Math.max(0, Number(row.hit_count || 0)))
+    dist[hitCount] += 1
   }
   return dist
 })
 
-// 奖级名称映射
-const prizeNames: Record<number, string> = {
-  1: '一等奖', 2: '二等奖', 3: '三等奖',
-  4: '四等奖', 5: '五等奖', 6: '六等奖', 0: '未中奖'
-}
-
-// 图表更新节流
 let chartUpdateTimer: ReturnType<typeof setTimeout> | null = null
 
 const scheduleChartUpdate = () => {
@@ -358,31 +297,28 @@ const scheduleChartUpdate = () => {
   chartUpdateTimer = setTimeout(() => {
     chartUpdateTimer = null
     updateChart()
-  }, 300)
+  }, 250)
 }
 
-// 更新图表
 const updateChart = () => {
   if (!chartRef.value) return
 
   if (!chartInstance) {
     chartInstance = echarts.init(chartRef.value)
-    // 等浏览器完成 layout 后 resize，防止零尺寸问题
     requestAnimationFrame(() => chartInstance?.resize())
   }
 
-  const dist = prizeDistribution.value
-  const categories = [1, 2, 3, 4, 5, 6, 0].map(k => prizeNames[k])
-  const values = [1, 2, 3, 4, 5, 6, 0].map(k => dist[k])
-  const colors = ['#e74c3c', '#e67e22', '#f1c40f', '#2ecc71', '#3498db', '#9b59b6', '#95a5a6']
+  const dist = hitCountDistribution.value
+  const categories = Array.from({ length: 21 }, (_, i) => `${i}个`)
+  const values = Array.from({ length: 21 }, (_, i) => dist[i] || 0)
 
   const option: echarts.EChartsOption = {
     tooltip: { trigger: 'axis' },
-    grid: { left: '3%', right: '4%', bottom: '3%', top: '10%', containLabel: true },
+    grid: { left: '3%', right: '3%', bottom: '3%', top: '8%', containLabel: true },
     xAxis: {
       type: 'category',
       data: categories,
-      axisLabel: { color: '#aaa' },
+      axisLabel: { color: '#aaa', interval: 1 },
       axisLine: { lineStyle: { color: '#444' } }
     },
     yAxis: {
@@ -392,11 +328,11 @@ const updateChart = () => {
     },
     series: [{
       type: 'bar',
-      data: values.map((v, i) => ({
-        value: v,
-        itemStyle: { color: colors[i] }
-      })),
-      barWidth: '50%',
+      barWidth: '56%',
+      data: values,
+      itemStyle: {
+        color: '#00d4ff'
+      },
       label: {
         show: true,
         position: 'top',
@@ -409,7 +345,6 @@ const updateChart = () => {
   chartInstance.setOption(option)
 }
 
-// 监听结果变化更新图表（节流）
 watch(
   () => store.roundResults.length,
   () => {
@@ -417,7 +352,6 @@ watch(
   }
 )
 
-// 对比完成时立即更新图表
 watch(
   () => store.isComparing,
   (val) => {
@@ -431,7 +365,6 @@ watch(
   }
 )
 
-// 窗口resize
 const handleResize = () => {
   chartInstance?.resize()
 }
@@ -449,7 +382,6 @@ onUnmounted(() => {
   }
   chartInstance?.dispose()
   chartInstance = null
-  // 停止可能正在进行的对比
   if (store.isComparing) {
     store.stopCompare()
   }
@@ -480,19 +412,12 @@ onUnmounted(() => {
   color: var(--text-primary);
 }
 
-.header-actions {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-
 .section-title {
   font-size: 16px;
   color: var(--text-primary);
   margin-bottom: 16px;
 }
 
-/* 配置面板 */
 .config-panel {
   display: flex;
   flex-direction: column;
@@ -547,7 +472,6 @@ onUnmounted(() => {
   min-width: auto;
 }
 
-/* Toggle 开关 */
 .switch {
   position: relative;
   display: inline-block;
@@ -564,23 +488,20 @@ onUnmounted(() => {
 .slider {
   position: absolute;
   cursor: pointer;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
+  inset: 0;
   background-color: #444;
   border-radius: 24px;
   transition: 0.3s;
 }
 
 .slider::before {
-  content: "";
+  content: '';
   position: absolute;
   height: 18px;
   width: 18px;
   left: 3px;
   bottom: 3px;
-  background-color: white;
+  background-color: #fff;
   border-radius: 50%;
   transition: 0.3s;
 }
@@ -598,7 +519,6 @@ onUnmounted(() => {
   cursor: not-allowed;
 }
 
-/* 操作按钮 */
 .config-actions {
   display: flex;
   gap: 12px;
@@ -626,24 +546,23 @@ onUnmounted(() => {
   opacity: 0.85;
 }
 
-.btn-primary:disabled {
+.btn-primary:disabled,
+.btn-secondary:disabled,
+.btn-export:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
 
-.btn-secondary {
+.btn-secondary,
+.btn-export {
   background: var(--bg-secondary);
   color: var(--text-primary);
 }
 
-.btn-secondary:hover:not(:disabled) {
+.btn-secondary:hover:not(:disabled),
+.btn-export:hover:not(:disabled) {
   border-color: var(--color-primary);
   color: var(--color-primary);
-}
-
-.btn-secondary:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 
 .btn-danger {
@@ -657,22 +576,6 @@ onUnmounted(() => {
   color: #fff;
 }
 
-.btn-export {
-  background: var(--bg-secondary);
-  color: var(--text-primary);
-}
-
-.btn-export:hover:not(:disabled) {
-  border-color: var(--color-primary);
-  color: var(--color-primary);
-}
-
-.btn-export:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-/* 进度条 */
 .progress-section {
   margin-top: 16px;
 }
@@ -699,7 +602,6 @@ onUnmounted(() => {
   transition: width 0.3s ease;
 }
 
-/* 错误提示 */
 .error-banner {
   margin-top: 16px;
   padding: 12px 16px;
@@ -710,10 +612,9 @@ onUnmounted(() => {
   font-size: 14px;
 }
 
-/* 统计卡片 */
 .stats-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   gap: 16px;
 }
 
@@ -721,23 +622,23 @@ onUnmounted(() => {
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
   border-radius: 8px;
-  padding: 20px;
+  padding: 18px;
   text-align: center;
 }
 
 .stat-value {
-  font-size: 28px;
-  font-weight: bold;
+  font-size: 24px;
+  font-weight: 700;
   color: var(--text-primary);
-  margin-bottom: 4px;
-}
-
-.stat-value.highlight-win {
-  color: #f1c40f;
+  margin-bottom: 6px;
 }
 
 .stat-value.highlight-rate {
   color: #2ecc71;
+}
+
+.stat-value.highlight-win {
+  color: #f1c40f;
 }
 
 .stat-label {
@@ -745,7 +646,6 @@ onUnmounted(() => {
   color: var(--text-secondary);
 }
 
-/* 中奖记录 */
 .winning-records {
   display: flex;
   flex-direction: column;
@@ -754,8 +654,8 @@ onUnmounted(() => {
 
 .winning-record {
   padding: 12px 16px;
-  background: rgba(241, 196, 15, 0.05);
-  border: 1px solid rgba(241, 196, 15, 0.2);
+  background: rgba(0, 212, 255, 0.04);
+  border: 1px solid rgba(0, 212, 255, 0.25);
   border-radius: 8px;
 }
 
@@ -763,7 +663,7 @@ onUnmounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 8px;
+  margin-bottom: 10px;
 }
 
 .record-round {
@@ -771,19 +671,10 @@ onUnmounted(() => {
   color: var(--text-secondary);
 }
 
-.record-prize {
+.record-hit {
   font-size: 13px;
-  padding: 2px 8px;
-  border-radius: 4px;
-  font-weight: bold;
+  color: #00d4ff;
 }
-
-.prize-1 { background: rgba(231, 76, 60, 0.2); color: #e74c3c; }
-.prize-2 { background: rgba(230, 126, 34, 0.2); color: #e67e22; }
-.prize-3 { background: rgba(241, 196, 15, 0.2); color: #f1c40f; }
-.prize-4 { background: rgba(46, 204, 113, 0.2); color: #2ecc71; }
-.prize-5 { background: rgba(52, 152, 219, 0.2); color: #3498db; }
-.prize-6 { background: rgba(155, 89, 182, 0.2); color: #9b59b6; }
 
 .record-balls {
   display: flex;
@@ -800,18 +691,31 @@ onUnmounted(() => {
 
 .record-info {
   display: flex;
+  flex-wrap: wrap;
   gap: 16px;
   font-size: 12px;
   color: var(--text-secondary);
 }
 
-/* 图表 */
+.actual-result {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.actual-label {
+  font-size: 13px;
+  color: var(--text-secondary);
+  padding-top: 6px;
+}
+
 .chart-container {
   width: 100%;
   height: 300px;
 }
 
-/* 表格 */
 .table-container {
   overflow-x: auto;
 }
@@ -819,87 +723,78 @@ onUnmounted(() => {
 .data-table {
   width: 100%;
   border-collapse: collapse;
+  min-width: 960px;
 }
 
 .data-table th,
 .data-table td {
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--border-color);
-  text-align: center;
-  font-size: 13px;
-}
-
-.data-table th {
-  background: var(--bg-tertiary, #1a1a2e);
-  color: var(--text-secondary);
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-.data-table td {
+  padding: 10px 8px;
+  text-align: left;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   color: var(--text-primary);
+  font-size: 13px;
+  vertical-align: middle;
+}
+
+.data-table thead th {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
 }
 
 .row-winning {
-  background: rgba(241, 196, 15, 0.05);
+  background: rgba(46, 204, 113, 0.06);
 }
 
 .balls-cell {
-  white-space: nowrap;
+  min-width: 460px;
 }
 
 .balls-row {
   display: flex;
-  gap: 4px;
-  align-items: center;
-  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .balls-row-compact {
-  gap: 2px;
+  gap: 6px;
 }
 
-.prize-tag {
-  display: inline-block;
-  padding: 2px 8px;
-  border-radius: 4px;
-  font-size: 12px;
+.ball-wrap {
+  position: relative;
+  display: inline-flex;
+  border-radius: 50%;
+  padding: 2px;
 }
 
-.prize-tag.prize-0 {
-  color: var(--text-muted);
+.ball-wrap.is-hit {
+  box-shadow: 0 0 0 2px rgba(46, 204, 113, 0.9);
 }
 
-.text-success {
-  color: #2ecc71;
+.ball-wrap.is-actual {
+  box-shadow: 0 0 0 2px rgba(0, 212, 255, 0.85);
 }
 
 .text-muted {
-  color: var(--text-muted);
+  color: var(--text-secondary);
 }
 
-/* 分页 */
 .pagination {
+  margin-top: 16px;
   display: flex;
   justify-content: center;
   align-items: center;
-  gap: 16px;
-  padding: 16px 0;
+  gap: 10px;
 }
 
 .page-btn {
-  padding: 8px 16px;
-  background: var(--bg-secondary);
+  padding: 6px 12px;
   border: 1px solid var(--border-color);
-  border-radius: 6px;
+  background: var(--bg-secondary);
   color: var(--text-primary);
+  border-radius: 6px;
   cursor: pointer;
-  transition: all 0.3s;
-}
-
-.page-btn:hover:not(:disabled) {
-  border-color: var(--color-primary);
-  color: var(--color-primary);
 }
 
 .page-btn:disabled {
@@ -908,22 +803,32 @@ onUnmounted(() => {
 }
 
 .page-info {
-  font-size: 14px;
   color: var(--text-secondary);
+  font-size: 13px;
 }
 
-/* 响应式 */
 @media (max-width: 768px) {
   .comparison-page {
-    padding: 12px;
+    padding: 16px;
   }
 
-  .config-row {
+  .page-content {
+    padding: 16px;
+  }
+
+  .config-actions {
+    flex-wrap: wrap;
+  }
+
+  .record-header {
     flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
   }
 
-  .stats-grid {
-    grid-template-columns: repeat(2, 1fr);
+  .record-balls {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }
 </style>

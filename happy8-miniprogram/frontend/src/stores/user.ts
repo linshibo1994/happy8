@@ -4,6 +4,7 @@ import type { UserInfo, UserProfile, LoginResponse } from '@/types'
 import { STORAGE_KEYS, STATUS_CODES, PAGE_PATHS } from '@/constants'
 import { userApi } from '@/services/user'
 import { useMembershipStore } from '@/stores/member'
+import defaultAvatar from '@/static/images/default-avatar.png'
 
 export const useUserStore = defineStore(
   'user',
@@ -254,7 +255,7 @@ export const useUserStore = defineStore(
 
     // 获取用户头像（带默认值）
     const getAvatarUrl = computed(() => {
-      return userInfo.value?.avatar_url || '/static/images/default-avatar.png'
+      return userInfo.value?.avatar_url || defaultAvatar
     })
 
     // 获取用户昵称（带默认值）

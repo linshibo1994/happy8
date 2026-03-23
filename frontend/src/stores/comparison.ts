@@ -4,7 +4,10 @@ import type {
   BatchCompareParams,
   BatchCompareResult,
   CompareRoundResult,
-  AlgorithmOption
+  AlgorithmOption,
+  CompareProgressEvent,
+  CompareResultEvent,
+  CompareCompleteEvent
 } from '@/types/comparison'
 import { getAvailableIssues, createBatchCompareStream } from '@/api/comparison'
 
@@ -40,6 +43,28 @@ const ALGORITHM_OPTIONS: AlgorithmOption[] = [
   { label: '混合分析', value: 'hybrid', category: '智能预测' },
   { label: '混合分析 V2', value: 'hybrid_v2', category: '智能预测' },
 ]
+
+const toNumberList = (value: unknown): number[] => {
+  if (!Array.isArray(value)) return []
+  return value.map((item) => Number(item)).filter((item) => Number.isFinite(item))
+}
+
+const toRoundResult = (data: Record<string, unknown>): CompareRoundResult => {
+  const predictedNumbers = toNumberList(data.predicted_numbers)
+  const hitNumbers = toNumberList(data.hit_numbers)
+  const hitCount = Number(data.hit_count ?? hitNumbers.length)
+  const hitRate = Number(data.hit_rate ?? (predictedNumbers.length > 0 ? hitCount / predictedNumbers.length : 0))
+
+  return {
+    round: Number(data.round ?? 0),
+    analysis_periods: Number(data.analysis_periods ?? 0),
+    predicted_numbers: predictedNumbers,
+    hit_numbers: hitNumbers,
+    hit_count: Number.isFinite(hitCount) ? hitCount : 0,
+    hit_rate: Number.isFinite(hitRate) ? hitRate : 0,
+    success: Boolean(data.success ?? true) && predictedNumbers.length > 0,
+  }
+}
 
 export const useComparisonStore = defineStore('comparison', () => {
   // 可用期号列表
@@ -81,16 +106,38 @@ export const useComparisonStore = defineStore('comparison', () => {
     return categories
   })
 
-  // 中奖轮次
-  const winningRounds = computed(() =>
-    roundResults.value.filter(r => r.prize_level > 0 && r.prize_level <= 6)
+  // 有命中轮次
+  const hitRounds = computed(() =>
+    roundResults.value
+      .filter((row) => row.success && row.hit_count > 0)
+      .sort((a, b) => b.hit_count - a.hit_count || b.hit_rate - a.hit_rate)
   )
 
-  // 中奖率
-  const winRate = computed(() => {
+  // 命中轮次占比（命中数 > 0）
+  const positiveHitRate = computed(() => {
     const total = roundResults.value.length
     if (total === 0) return 0
-    return (winningRounds.value.length / total) * 100
+    return (hitRounds.value.length / total) * 100
+  })
+
+  // 平均命中数
+  const averageHitCount = computed(() => {
+    const successRows = roundResults.value.filter((row) => row.success)
+    if (successRows.length === 0) return 0
+    return successRows.reduce((sum, row) => sum + row.hit_count, 0) / successRows.length
+  })
+
+  // 平均命中率
+  const averageHitRate = computed(() => {
+    const successRows = roundResults.value.filter((row) => row.success)
+    if (successRows.length === 0) return 0
+    return successRows.reduce((sum, row) => sum + row.hit_rate, 0) / successRows.length
+  })
+
+  // 最佳命中
+  const bestHitCount = computed(() => {
+    if (roundResults.value.length === 0) return 0
+    return Math.max(...roundResults.value.map((row) => row.hit_count))
   })
 
   // 获取可用期号
@@ -155,9 +202,9 @@ export const useComparisonStore = defineStore('comparison', () => {
 
     eventSource.addEventListener('progress', (e: MessageEvent) => {
       try {
-        const data = JSON.parse(e.data)
-        currentRound.value = data.round
-        progress.value = data.percentage
+        const data = JSON.parse(e.data) as CompareProgressEvent
+        currentRound.value = Number(data.round ?? 0)
+        progress.value = Number(data.percentage ?? 0)
       } catch (err) {
         console.error('解析进度数据失败:', err)
       }
@@ -165,18 +212,8 @@ export const useComparisonStore = defineStore('comparison', () => {
 
     eventSource.addEventListener('result', (e: MessageEvent) => {
       try {
-        const data = JSON.parse(e.data)
-        roundResults.value.push({
-          round: data.round,
-          analysis_periods: data.analysis_periods,
-          predicted_reds: data.predicted_reds,
-          predicted_blue: data.predicted_blue,
-          prize_level: data.prize_level,
-          prize_name: data.prize_name,
-          red_matches: data.red_matches,
-          blue_match: data.blue_match,
-          success: data.predicted_reds !== null
-        })
+        const data = JSON.parse(e.data) as CompareResultEvent
+        roundResults.value.push(toRoundResult(data as unknown as Record<string, unknown>))
       } catch (err) {
         console.error('解析结果数据失败:', err)
       }
@@ -184,11 +221,11 @@ export const useComparisonStore = defineStore('comparison', () => {
 
     eventSource.addEventListener('complete', (e: MessageEvent) => {
       try {
-        const data = JSON.parse(e.data)
+        const data = JSON.parse(e.data) as CompareCompleteEvent
         if (data.success && data.summary) {
           finalResult.value = data.summary
-        } else if (!data.success && data.message) {
-          error.value = data.message
+        } else if (!data.success && (data as { message?: string }).message) {
+          error.value = (data as { message?: string }).message || '批量对比失败'
         }
       } catch (err) {
         console.error('解析完成数据失败:', err)
@@ -206,9 +243,6 @@ export const useComparisonStore = defineStore('comparison', () => {
       if (isComparing.value) {
         error.value = 'SSE 连接断开'
         isComparing.value = false
-        if (progress.value === 0) {
-          progress.value = 0
-        }
       }
     }
   }
@@ -268,8 +302,11 @@ export const useComparisonStore = defineStore('comparison', () => {
     error,
     algorithmOptions,
     algorithmCategories,
-    winningRounds,
-    winRate,
+    hitRounds,
+    positiveHitRate,
+    averageHitCount,
+    averageHitRate,
+    bestHitCount,
     fetchIssues,
     validateParams,
     startCompare,

@@ -1,3 +1,4 @@
+import logging
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter
@@ -8,6 +9,7 @@ from backend.utils.formatter import build_response
 
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 class HistoryRequest(BaseModel):
@@ -20,6 +22,10 @@ class HistoryRequest(BaseModel):
 
 class RefreshRequest(BaseModel):
     reload_from_local: bool = Field(False, description="仅重新加载本地数据")
+
+
+class AppendRequest(BaseModel):
+    count: int = Field(5, ge=1, le=200, description="追加最近期数")
 
 
 def _issue_to_int(issue: str) -> int:
@@ -42,7 +48,7 @@ def _serialize_record(row: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @router.get("/api/data/latest")
-async def get_latest_data() -> dict:
+def get_latest_data() -> dict:
     try:
         analyzer = get_analyzer_instance()
         data = analyzer.load_data(1)
@@ -52,11 +58,12 @@ async def get_latest_data() -> dict:
         latest = _serialize_record(data.iloc[0].to_dict())
         return build_response(True, latest, "获取成功")
     except Exception as exc:
+        logger.exception(f"操作失败: {exc}")
         return build_response(False, None, f"获取最新数据失败: {exc}")
 
 
 @router.post("/api/data/history")
-async def get_history_data(payload: HistoryRequest) -> dict:
+def get_history_data(payload: HistoryRequest) -> dict:
     try:
         analyzer = get_analyzer_instance()
         data = analyzer.load_data()
@@ -95,11 +102,12 @@ async def get_history_data(payload: HistoryRequest) -> dict:
         }
         return build_response(True, response_data, "获取成功")
     except Exception as exc:
+        logger.exception(f"操作失败: {exc}")
         return build_response(False, None, f"获取历史数据失败: {exc}")
 
 
 @router.post("/api/data/refresh")
-async def refresh_data(payload: RefreshRequest) -> dict:
+def refresh_data(payload: RefreshRequest) -> dict:
     try:
         if payload.reload_from_local:
             total_records = reload_local_data()
@@ -112,11 +120,38 @@ async def refresh_data(payload: RefreshRequest) -> dict:
         refreshed = refresh_data_from_network()
         return build_response(True, refreshed, "数据刷新完成")
     except Exception as exc:
+        logger.exception(f"操作失败: {exc}")
         return build_response(False, None, f"刷新数据失败: {exc}")
 
 
+@router.post("/api/data/append")
+def append_recent_data(payload: AppendRequest) -> dict:
+    try:
+        analyzer = get_analyzer_instance(ensure_loaded=True)
+        before_total = len(analyzer.load_data())
+        updated_df = analyzer.crawl_latest_data(payload.count)
+        after_total = len(updated_df)
+
+        latest_issue = str(updated_df.iloc[0]["issue"]) if len(updated_df) > 0 else None
+        appended_count = max(0, after_total - before_total)
+
+        return build_response(
+            True,
+            {
+                "requested_count": payload.count,
+                "appended_count": appended_count,
+                "total_records": int(after_total),
+                "latest_issue": latest_issue,
+            },
+            "追加最近数据完成",
+        )
+    except Exception as exc:
+        logger.exception(f"操作失败: {exc}")
+        return build_response(False, None, f"追加最近数据失败: {exc}")
+
+
 @router.get("/api/data/statistics")
-async def get_data_statistics(periods: int = 300) -> dict:
+def get_data_statistics(periods: int = 300) -> dict:
     try:
         analyzer = get_analyzer_instance()
         data = analyzer.load_data(periods)
@@ -151,5 +186,5 @@ async def get_data_statistics(periods: int = 300) -> dict:
         }
         return build_response(True, response_data, "统计成功")
     except Exception as exc:
+        logger.exception(f"操作失败: {exc}")
         return build_response(False, None, f"统计失败: {exc}")
-

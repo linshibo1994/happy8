@@ -7,40 +7,23 @@
           <div class="header-actions">
             <span class="data-count" v-if="totalItems > 0">共 {{ totalItems }} 条</span>
             <div class="update-actions">
-              <button
-                class="btn-update"
-                @click="appendLatest"
-                :disabled="isUpdating || lotteryStore.loading"
-              >
+              <button class="btn-update" @click="appendLatest" :disabled="isUpdating || lotteryStore.loading">
                 追加最新一期
               </button>
               <div class="append-group">
-                <input
-                  type="number"
-                  v-model.number="appendCount"
-                  min="1"
-                  max="100"
-                  placeholder="5"
-                />
-                <button
-                  class="btn-update btn-update-secondary"
-                  @click="appendRecent"
-                  :disabled="isUpdating || lotteryStore.loading"
-                >
+                <input type="number" v-model.number="appendCount" min="1" max="100" placeholder="5" />
+                <button class="btn-update btn-update-secondary" @click="appendRecent" :disabled="isUpdating || lotteryStore.loading">
                   追加最近N期
                 </button>
               </div>
             </div>
-            <button class="btn-export" @click="exportData" :disabled="totalItems === 0">
-              导出 CSV
-            </button>
+            <button class="btn-export" @click="exportData" :disabled="totalItems === 0">导出 CSV</button>
           </div>
         </div>
 
-        <!-- 筛选 -->
         <div class="filters">
           <div class="filter-item">
-            <label>期数范围</label>
+            <label>期号范围</label>
             <input type="number" v-model.number="filters.periodStart" placeholder="起始期号" />
             <span class="filter-separator">-</span>
             <input type="number" v-model.number="filters.periodEnd" placeholder="结束期号" />
@@ -52,17 +35,14 @@
           <button class="btn-search" @click="searchHistory">搜索</button>
         </div>
 
-        <!-- 加载状态 -->
         <div v-if="lotteryStore.loading" class="loading-state">
           <span class="loading-text">数据加载中...</span>
         </div>
 
-        <!-- 空数据状态 -->
         <div v-else-if="filteredData.length === 0" class="empty-state">
           <span class="empty-text">暂无匹配数据</span>
         </div>
 
-        <!-- 数据表格 -->
         <template v-else>
           <div class="table-container">
             <table class="data-table">
@@ -70,8 +50,9 @@
                 <tr>
                   <th>期号</th>
                   <th>开奖日期</th>
-                  <th>红球</th>
-                  <th>蓝球</th>
+                  <th>开奖号码（20个）</th>
+                  <th>和值</th>
+                  <th>奇偶比</th>
                 </tr>
               </thead>
               <tbody>
@@ -80,34 +61,20 @@
                   <td class="date-cell">{{ item.date }}</td>
                   <td class="balls-cell">
                     <div class="balls-row">
-                      <LotteryBall
-                        v-for="(num, i) in item.red_balls"
-                        :key="'r-' + i"
-                        :number="num"
-                        type="red"
-                        size="sm"
-                      />
+                      <LotteryBall v-for="(num, i) in item.numbers" :key="'n-' + i" :number="num" size="sm" />
                     </div>
                   </td>
-                  <td class="balls-cell">
-                    <LotteryBall :number="item.blue_ball" type="blue" size="sm" />
-                  </td>
+                  <td>{{ calcSum(item.numbers) }}</td>
+                  <td>{{ calcOddEven(item.numbers) }}</td>
                 </tr>
               </tbody>
             </table>
           </div>
 
-          <!-- 分页 -->
           <div class="pagination">
-            <button class="page-btn" :disabled="currentPage <= 1" @click="goToPage(currentPage - 1)">
-              上一页
-            </button>
-            <span class="page-info">
-              第 {{ currentPage }} / {{ totalPages }} 页
-            </span>
-            <button class="page-btn" :disabled="currentPage >= totalPages" @click="goToPage(currentPage + 1)">
-              下一页
-            </button>
+            <button class="page-btn" :disabled="currentPage <= 1" @click="goToPage(currentPage - 1)">上一页</button>
+            <span class="page-info">第 {{ currentPage }} / {{ totalPages }} 页</span>
+            <button class="page-btn" :disabled="currentPage >= totalPages" @click="goToPage(currentPage + 1)">下一页</button>
           </div>
         </template>
       </div>
@@ -132,7 +99,7 @@ const filters = ref<{
 }>({
   periodStart: '',
   periodEnd: '',
-  numberSearch: ''
+  numberSearch: '',
 })
 
 const currentPage = ref(1)
@@ -140,8 +107,15 @@ const pageSize = ref(20)
 const appendCount = ref(5)
 const isUpdating = ref(false)
 
-// 直接使用 store 中的数据
 const historyData = computed(() => lotteryStore.historyData)
+
+const calcSum = (numbers: number[]): number => numbers.reduce((sum, value) => sum + value, 0)
+
+const calcOddEven = (numbers: number[]): string => {
+  const odd = numbers.filter((num) => num % 2 === 1).length
+  const even = numbers.length - odd
+  return `${odd}:${even}`
+}
 
 const filteredData = computed(() => {
   let result = [...historyData.value]
@@ -153,15 +127,9 @@ const filteredData = computed(() => {
   if (startIssue !== null || endIssue !== null) {
     result = result.filter((item) => {
       const issue = Number(item.period)
-      if (Number.isNaN(issue)) {
-        return false
-      }
-      if (startIssue !== null && issue < startIssue) {
-        return false
-      }
-      if (endIssue !== null && issue > endIssue) {
-        return false
-      }
+      if (Number.isNaN(issue)) return false
+      if (startIssue !== null && issue < startIssue) return false
+      if (endIssue !== null && issue > endIssue) return false
       return true
     })
   }
@@ -170,13 +138,10 @@ const filteredData = computed(() => {
     const queryNumbers = numberSearch
       .split(/[\s,，]+/)
       .map((text) => Number(text))
-      .filter((value) => Number.isInteger(value) && value >= 1 && value <= 33)
+      .filter((value) => Number.isInteger(value) && value >= 1 && value <= 80)
 
     if (queryNumbers.length > 0) {
-      result = result.filter((item) => {
-        const allBalls = [...item.red_balls, item.blue_ball]
-        return queryNumbers.every((value) => allBalls.includes(value))
-      })
+      result = result.filter((item) => queryNumbers.every((value) => item.numbers.includes(value)))
     }
   }
 
@@ -184,7 +149,7 @@ const filteredData = computed(() => {
 })
 
 const totalItems = computed(() => filteredData.value.length)
-const totalPages = computed(() => Math.ceil(totalItems.value / pageSize.value))
+const totalPages = computed(() => Math.max(1, Math.ceil(totalItems.value / pageSize.value)))
 
 const displayData = computed(() => {
   const start = (currentPage.value - 1) * pageSize.value
@@ -208,12 +173,13 @@ const exportData = () => {
     return
   }
 
-  const headers = ['期号', '开奖日期', '红球', '蓝球']
+  const headers = ['期号', '开奖日期', '开奖号码', '和值', '奇偶比']
   const rows = filteredData.value.map((item) => [
     item.period,
     item.date,
-    item.red_balls.map((num) => String(num).padStart(2, '0')).join(' '),
-    String(item.blue_ball).padStart(2, '0')
+    item.numbers.map((num) => String(num).padStart(2, '0')).join(' '),
+    String(calcSum(item.numbers)),
+    calcOddEven(item.numbers),
   ])
 
   const csvText = [headers, ...rows]
@@ -224,7 +190,7 @@ const exportData = () => {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = `ssq_history_${new Date().toISOString().slice(0, 10)}.csv`
+  a.download = `happy8_history_${new Date().toISOString().slice(0, 10)}.csv`
   document.body.appendChild(a)
   a.click()
   document.body.removeChild(a)
@@ -233,9 +199,7 @@ const exportData = () => {
 }
 
 const appendLatest = async () => {
-  if (isUpdating.value) {
-    return
-  }
+  if (isUpdating.value) return
   isUpdating.value = true
   try {
     const res = await lotteryStore.refresh()
@@ -251,10 +215,7 @@ const appendLatest = async () => {
 }
 
 const appendRecent = async () => {
-  if (isUpdating.value) {
-    return
-  }
-
+  if (isUpdating.value) return
   const normalizedCount = Math.max(1, Math.min(100, Math.floor(appendCount.value || 5)))
   appendCount.value = normalizedCount
 
@@ -273,10 +234,7 @@ const appendRecent = async () => {
 }
 
 onMounted(async () => {
-  await Promise.all([
-    lotteryStore.fetchLatest(),
-    lotteryStore.fetchHistory(1000)
-  ])
+  await Promise.all([lotteryStore.fetchLatest(), lotteryStore.fetchHistory(1000)])
 })
 </script>
 
@@ -294,31 +252,13 @@ onMounted(async () => {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 24px;
+  gap: 16px;
+  flex-wrap: wrap;
 }
 
 .page-title {
   font-size: 20px;
   color: var(--text-primary);
-}
-
-.btn-export {
-  padding: 10px 20px;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
-  color: var(--text-primary);
-  cursor: pointer;
-  transition: all 0.3s;
-}
-
-.btn-export:hover {
-  border-color: var(--color-primary);
-  color: var(--color-primary);
-}
-
-.btn-export:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 
 .header-actions {
@@ -362,11 +302,6 @@ onMounted(async () => {
   border-radius: 6px;
   color: #fff;
   cursor: pointer;
-  transition: all 0.3s;
-}
-
-.btn-update:hover:not(:disabled) {
-  filter: brightness(1.08);
 }
 
 .btn-update:disabled {
@@ -380,36 +315,49 @@ onMounted(async () => {
   color: var(--text-primary);
 }
 
-.btn-update-secondary:hover:not(:disabled) {
-  border-color: var(--color-primary);
-  color: var(--color-primary);
+.btn-export {
+  padding: 10px 20px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.btn-export:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .filters {
   display: flex;
-  gap: 24px;
-  margin-bottom: 24px;
+  gap: 12px;
+  align-items: flex-end;
   flex-wrap: wrap;
+  margin-bottom: 18px;
 }
 
 .filter-item {
   display: flex;
   align-items: center;
   gap: 8px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 8px 10px;
 }
 
 .filter-item label {
-  font-size: 14px;
   color: var(--text-secondary);
+  font-size: 13px;
 }
 
 .filter-item input {
-  padding: 8px 12px;
-  background: var(--bg-primary);
+  padding: 6px 8px;
   border: 1px solid var(--border-color);
   border-radius: 6px;
+  background: var(--bg-primary);
   color: var(--text-primary);
-  width: 120px;
 }
 
 .filter-separator {
@@ -417,16 +365,29 @@ onMounted(async () => {
 }
 
 .btn-search {
-  padding: 8px 24px;
-  background: var(--gradient-primary);
+  padding: 10px 16px;
   border: none;
   border-radius: 6px;
-  color: white;
+  background: var(--gradient-primary);
+  color: #fff;
   cursor: pointer;
 }
 
+.loading-state,
+.empty-state {
+  min-height: 120px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.loading-text,
+.empty-text {
+  color: var(--text-secondary);
+}
+
 .table-container {
-  overflow-x: auto;
+  overflow: auto;
 }
 
 .data-table {
@@ -436,86 +397,37 @@ onMounted(async () => {
 
 .data-table th,
 .data-table td {
-  padding: 16px;
-  text-align: left;
+  padding: 10px 8px;
   border-bottom: 1px solid var(--border-color);
-}
-
-.data-table th {
-  background: var(--bg-secondary);
-  color: var(--text-secondary);
-  font-weight: 500;
-}
-
-.data-table tr:hover {
-  background: var(--bg-hover);
-}
-
-.period-cell {
-  color: var(--color-primary);
-  font-weight: 500;
-}
-
-.date-cell {
-  color: var(--text-secondary);
-}
-
-.balls-cell {
-  padding: 8px 16px;
+  text-align: left;
 }
 
 .balls-row {
-  display: flex;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: repeat(10, minmax(32px, 1fr));
+  gap: 6px;
+  min-width: 360px;
 }
 
 .pagination {
   display: flex;
   justify-content: center;
   align-items: center;
-  gap: 16px;
-  margin-top: 24px;
+  gap: 12px;
+  margin-top: 16px;
 }
 
 .page-btn {
-  padding: 8px 16px;
-  background: var(--bg-secondary);
+  padding: 8px 12px;
   border: 1px solid var(--border-color);
   border-radius: 6px;
+  background: var(--bg-secondary);
   color: var(--text-primary);
   cursor: pointer;
-  transition: all 0.3s;
-}
-
-.page-btn:hover:not(:disabled) {
-  border-color: var(--color-primary);
-  color: var(--color-primary);
 }
 
 .page-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-}
-
-.page-info {
-  color: var(--text-secondary);
-}
-
-.loading-state,
-.empty-state {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 200px;
-}
-
-.loading-text {
-  color: var(--text-secondary);
-  font-size: 16px;
-}
-
-.empty-text {
-  color: var(--text-muted);
-  font-size: 14px;
 }
 </style>

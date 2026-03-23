@@ -13,29 +13,23 @@ export interface PredictParams {
   method: string
   periods?: number
   count?: number
-  duplex?: boolean        // 是否复式预测
-  redCount?: number       // 复式红球数量
-  blueCount?: number      // 复式蓝球数量
   useGpu?: boolean
   parallel?: boolean
   explain?: boolean
 }
 
-// 预测结果
+// 预测结果（快乐8）
 export interface PredictResult {
   id?: number
   method: string
-  red_balls: number[]
-  blue_ball?: number
-  blue_balls?: number[]
-  duplex?: boolean
-  red_count?: number
-  blue_count?: number
-  stake_count?: number
-  total_cost?: number
+  numbers: number[]
   confidence?: number
-  tags?: string[]
-  explanation?: string
+  execution_time?: number
+  target_issue?: string
+  periods?: number
+  hit_numbers?: number[]
+  hit_count?: number
+  hit_rate?: number
   created_at?: string
 }
 
@@ -58,14 +52,14 @@ export interface PredictTask {
   endTime?: number
 }
 
-// 预测步骤定义 (实际数据在 utils/constants.ts 中)
+// 预测步骤定义
 export interface PredictStep {
   key: string
   label: string
   range: [number, number]
 }
 
-// 预测响应 (匹配后端 PredictionResponse)
+// 预测响应
 export interface PredictionResponse {
   success: boolean
   data?: PredictResult | PredictResult[] | Record<string, unknown>

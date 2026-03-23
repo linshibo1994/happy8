@@ -7,25 +7,15 @@ export interface BatchCompareParams {
   comparison_times: number
 }
 
-// 单轮对比结果
+// 单轮对比结果（快乐8）
 export interface CompareRoundResult {
   round: number
   analysis_periods: number
-  predicted_reds: number[] | null
-  predicted_blue: number | null
-  prize_level: number
-  prize_name: string
-  red_matches: number
-  blue_match: boolean
+  predicted_numbers: number[]
+  hit_numbers: number[]
+  hit_count: number
+  hit_rate: number
   success: boolean
-}
-
-// 奖级统计
-export interface PrizeStats {
-  count: number
-  probability: number
-  prize_name: string
-  prize_money: string
 }
 
 // 期数统计
@@ -42,11 +32,10 @@ export interface PeriodsStats {
 export interface ActualResult {
   issue: string
   date: string
-  red_balls: number[]
-  blue_ball: number
+  numbers: number[]
 }
 
-// 批量对比完整结果
+// 批量对比汇总
 export interface BatchCompareResult {
   success: boolean
   error?: string
@@ -56,8 +45,11 @@ export interface BatchCompareResult {
   comparison_times: number
   success_predictions: number
   success_rate: number
+  avg_hit_count: number
+  avg_hit_rate: number
+  best_hit_count: number
+  best_hit_rate: number
   periods_stats: PeriodsStats
-  probability_stats: Record<string, PrizeStats>
   detailed_results: CompareRoundResult[]
   generated_time: string
 }
@@ -70,21 +62,13 @@ export interface CompareProgressEvent {
 }
 
 // SSE 结果事件
-export interface CompareResultEvent {
-  round: number
-  predicted_reds: number[]
-  predicted_blue: number
-  prize_level: number
-  prize_name: string
-  red_matches: number
-  blue_match: boolean
-  analysis_periods: number
-}
+export interface CompareResultEvent extends CompareRoundResult {}
 
 // SSE 完成事件
 export interface CompareCompleteEvent {
   success: boolean
   summary: BatchCompareResult
+  message?: string
 }
 
 // 算法选项

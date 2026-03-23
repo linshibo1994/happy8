@@ -2,8 +2,20 @@
  * API相关常量
  */
 const resolveBaseUrl = () => {
-  const fallback = import.meta.env.PROD ? 'https://api.happy8.com' : 'http://localhost:8000'
-  const base = import.meta.env.VITE_API_BASE_URL ?? fallback
+  const envBase = (import.meta.env.VITE_API_BASE_URL || '').trim()
+  if (envBase) {
+    return envBase.replace(/\/+$/, '')
+  }
+
+  // H5 生产环境默认走同域，避免硬编码到不可达域名导致全站请求失败
+  // #ifdef H5
+  if (import.meta.env.PROD && typeof window !== 'undefined' && window.location?.origin) {
+    return window.location.origin.replace(/\/+$/, '')
+  }
+  // #endif
+
+  const fallback = 'http://localhost:8000'
+  const base = fallback
   return base.replace(/\/+$/, '')
 }
 

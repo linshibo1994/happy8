@@ -1,3 +1,4 @@
+import logging
 import platform
 import sys
 
@@ -10,10 +11,11 @@ from backend.utils.formatter import build_response
 
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.get("/api/system/info")
-async def get_system_info() -> dict:
+def get_system_info() -> dict:
     try:
         analyzer = get_analyzer_instance()
         data = analyzer.load_data()
@@ -43,11 +45,12 @@ async def get_system_info() -> dict:
         }
         return build_response(True, payload, "获取系统信息成功")
     except Exception as exc:
+        logger.exception(f"操作失败: {exc}")
         return build_response(False, None, f"获取系统信息失败: {exc}")
 
 
 @router.post("/api/system/cache/clear")
-async def clear_cache() -> dict:
+def clear_cache() -> dict:
     try:
         cleared_count = cache_manager.clear()
         analyzer = get_analyzer_instance(ensure_loaded=False)
@@ -60,5 +63,5 @@ async def clear_cache() -> dict:
         }
         return build_response(True, payload, "缓存已清除")
     except Exception as exc:
+        logger.exception(f"操作失败: {exc}")
         return build_response(False, None, f"清除缓存失败: {exc}")
-

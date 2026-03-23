@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import threading
 import time
 from datetime import datetime
@@ -16,6 +17,26 @@ from backend.utils.formatter import build_response, format_prediction_result, fo
 
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
+METHOD_ALIASES = {
+    "super": "super_predictor",
+    "graph_nn": "gnn",
+    "dynamic_bayes": "bayesian",
+    "adaptive_ensemble": "advanced_ensemble",
+    "high_confidence_full": "high_confidence",
+    "high_confidence_advanced": "high_confidence",
+    "high_confidence_lite": "high_confidence",
+    "high_confidence_complete": "high_confidence",
+    "hybrid": "super_predictor",
+    "hybrid_v2": "super_predictor",
+    "stats": "frequency",
+    "probability": "bayesian",
+    "decision_tree": "advanced_ensemble",
+    "patterns": "clustering",
+    "frequency_cons2": "frequency",
+    "consensus_halving": "ensemble",
+}
 
 
 class PredictionRequest(BaseModel):
@@ -26,6 +47,10 @@ class PredictionRequest(BaseModel):
 
 
 def _resolve_method(method: str) -> str:
+    alias_target = METHOD_ALIASES.get(method)
+    if alias_target:
+        method = alias_target
+
     if method in METHOD_MAPPING:
         return method
 
@@ -88,10 +113,11 @@ def _execute_prediction(payload: PredictionRequest) -> Dict[str, Any]:
 
 
 @router.post("/api/predict")
-async def predict(payload: PredictionRequest) -> dict:
+def predict(payload: PredictionRequest) -> dict:
     try:
         return _execute_prediction(payload)
     except Exception as exc:
+        logger.exception(f"操作失败: {exc}")
         return build_response(False, None, f"预测失败: {exc}")
 
 
@@ -113,6 +139,7 @@ async def predict_stream(
                 result = _execute_prediction(payload)
                 queue.put(("result", result))
             except Exception as exc:  # noqa: BLE001
+                logger.exception(f"操作失败: {exc}")
                 queue.put(
                     (
                         "error",
@@ -162,7 +189,7 @@ async def predict_stream(
                 continue
 
             if event_type == "error":
-                yield format_sse_event("error_event", event_payload)
+                yield format_sse_event("error", event_payload)
                 yield format_sse_event(
                     "complete",
                     {
@@ -190,4 +217,3 @@ async def predict_stream(
         "X-Accel-Buffering": "no",
     }
     return StreamingResponse(event_generator(), media_type="text/event-stream", headers=headers)
-

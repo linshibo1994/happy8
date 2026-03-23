@@ -66,9 +66,11 @@ export interface SseProgressEvent {
 }
 
 export interface SsePrediction {
-  predicted_reds: number[]
-  predicted_blue: number
-  prize_level: string | null
+  predicted_numbers: number[]
+  hit_numbers?: number[]
+  hit_count?: number
+  level?: string | null
+  prize_level?: string | null
 }
 
 export interface SseResultEvent {
@@ -83,11 +85,13 @@ export interface SseResultEvent {
 export interface SseWinningEvent {
   method: string
   periods: number
-  prize_level: string
-  predicted_reds: number[]
-  predicted_blue: number
-  winning_reds: number[]
-  winning_blue: number
+  level?: string
+  prize_level?: string
+  predicted_numbers: number[]
+  winning_numbers: number[]
+  hit_numbers: number[]
+  hit_count: number
+  hit_rate?: number
   issue: string
   date: string
 }

@@ -129,10 +129,10 @@
           v-for="(win, index) in winningRecords"
           :key="index"
           class="winning-card"
-          :class="prizeCls(win.prize_level)"
+          :class="prizeCls(win.display_level)"
         >
           <div class="win-card-header">
-            <span class="prize-tag">{{ win.prize_level }}</span>
+            <span class="prize-tag">{{ win.display_level }}</span>
             <span class="win-method">{{ methodLabel(win.method) }}</span>
             <span class="win-time">{{ formatTime(win.timestamp) }}</span>
           </div>
@@ -145,26 +145,21 @@
               <span class="win-label">预测号码</span>
               <div class="balls-row">
                 <span
-                  v-for="n in win.predicted_reds"
+                  v-for="n in win.predicted_numbers"
                   :key="'pr-' + n"
-                  class="ball red-ball"
-                  :class="{ 'ball-hit': win.winning_reds.includes(n) }"
+                  class="ball primary-ball"
+                  :class="{ 'ball-hit': win.hit_numbers.includes(n) }"
                 >{{ String(n).padStart(2, '0') }}</span>
-                <span
-                  class="ball blue-ball"
-                  :class="{ 'ball-hit': win.predicted_blue === win.winning_blue }"
-                >{{ String(win.predicted_blue).padStart(2, '0') }}</span>
               </div>
             </div>
             <div class="win-row">
               <span class="win-label">开奖号码</span>
               <div class="balls-row">
                 <span
-                  v-for="n in win.winning_reds"
+                  v-for="n in win.winning_numbers"
                   :key="'wr-' + n"
-                  class="ball red-ball"
+                  class="ball secondary-ball"
                 >{{ String(n).padStart(2, '0') }}</span>
-                <span class="ball blue-ball">{{ String(win.winning_blue).padStart(2, '0') }}</span>
               </div>
             </div>
             <div class="win-row">
@@ -299,26 +294,21 @@
                   >
                     <td colspan="5">
                       <div class="winning-detail-cell">
-                        <span class="detail-prize-tag" :class="prizeCls(win.prize_level)">{{ win.prize_level }}</span>
+                        <span class="detail-prize-tag" :class="prizeCls(win.display_level)">{{ win.display_level }}</span>
                         <span class="detail-label">预测:</span>
                         <span
-                          v-for="n in win.predicted_reds"
+                          v-for="n in win.predicted_numbers"
                           :key="'dp-' + n"
-                          class="ball ball-sm red-ball"
-                          :class="{ 'ball-hit': win.winning_reds.includes(n) }"
+                          class="ball ball-sm primary-ball"
+                          :class="{ 'ball-hit': win.hit_numbers.includes(n) }"
                         >{{ String(n).padStart(2, '0') }}</span>
-                        <span
-                          class="ball ball-sm blue-ball"
-                          :class="{ 'ball-hit': win.predicted_blue === win.winning_blue }"
-                        >{{ String(win.predicted_blue).padStart(2, '0') }}</span>
                         <span class="detail-sep">|</span>
                         <span class="detail-label">开奖:</span>
                         <span
-                          v-for="n in win.winning_reds"
+                          v-for="n in win.winning_numbers"
                           :key="'dw-' + n"
-                          class="ball ball-sm red-ball"
+                          class="ball ball-sm secondary-ball"
                         >{{ String(n).padStart(2, '0') }}</span>
-                        <span class="ball ball-sm blue-ball">{{ String(win.winning_blue).padStart(2, '0') }}</span>
                         <span class="detail-issue">第{{ win.issue }}期</span>
                       </div>
                     </td>
@@ -366,6 +356,7 @@ interface LogLine {
 
 interface WinningRecord extends SseWinningEvent {
   timestamp: string
+  display_level: string
 }
 
 const appStore = useAppStore()
@@ -399,6 +390,44 @@ const params = ref<TestingRunParams>({
 })
 
 const orderedPrizeLevels = ['一等奖', '二等奖', '三等奖', '四等奖', '五等奖', '六等奖']
+
+const toNumberList = (value: unknown): number[] => {
+  if (!Array.isArray(value)) return []
+  return value.map((item) => Number(item)).filter((item) => Number.isFinite(item))
+}
+
+const normalizeWinningRecord = (payload: SseWinningEvent | Record<string, unknown>): WinningRecord => {
+  const data = payload as Record<string, unknown>
+  const resolvedPredictedNumbers = toNumberList(data.predicted_numbers)
+  const resolvedWinningNumbers = toNumberList(data.winning_numbers)
+
+  const hitNumbersRaw = toNumberList(data.hit_numbers)
+  const resolvedHitNumbers = hitNumbersRaw.length > 0
+    ? hitNumbersRaw
+    : resolvedPredictedNumbers.filter((num) => resolvedWinningNumbers.includes(num))
+
+  const hitCount = Number(data.hit_count ?? resolvedHitNumbers.length)
+  const resolvedHitCount = Number.isFinite(hitCount) ? hitCount : resolvedHitNumbers.length
+  const hitRate = Number(data.hit_rate ?? (resolvedPredictedNumbers.length > 0 ? resolvedHitCount / resolvedPredictedNumbers.length : 0))
+
+  const displayLevel = String(data.prize_level || data.level || `命中${resolvedHitCount}个`)
+
+  return {
+    method: String(data.method || ''),
+    periods: Number(data.periods || 0),
+    level: String(data.level || ''),
+    prize_level: String(data.prize_level || ''),
+    predicted_numbers: resolvedPredictedNumbers,
+    winning_numbers: resolvedWinningNumbers,
+    hit_numbers: resolvedHitNumbers,
+    hit_count: resolvedHitCount,
+    hit_rate: Number.isFinite(hitRate) ? hitRate : 0,
+    issue: String(data.issue || ''),
+    date: String(data.date || ''),
+    timestamp: new Date().toISOString(),
+    display_level: displayLevel
+  }
+}
 
 const allMethodIds = computed(() =>
   Object.values(methodGroups.value)
@@ -456,7 +485,17 @@ const prizeCls = (level: string) => {
     '五等奖': 'prize-5',
     '六等奖': 'prize-6'
   }
-  return map[level] || ''
+  if (map[level]) return map[level]
+
+  const match = level.match(/命中\\s*(\\d+)\\s*个/)
+  if (!match) return ''
+  const hit = Number(match[1])
+  if (hit >= 10) return 'prize-1'
+  if (hit >= 8) return 'prize-2'
+  if (hit >= 6) return 'prize-3'
+  if (hit >= 4) return 'prize-4'
+  if (hit >= 2) return 'prize-5'
+  return 'prize-6'
 }
 
 const toggleExpand = (method: string) => {
@@ -595,13 +634,11 @@ const startTesting = () => {
 
   eventSource.addEventListener('winning', (e: MessageEvent) => {
     try {
-      const data: SseWinningEvent = JSON.parse(e.data)
-      winningRecords.value.unshift({
-        ...data,
-        timestamp: new Date().toISOString()
-      })
+      const data = JSON.parse(e.data) as Record<string, unknown>
+      const normalized = normalizeWinningRecord(data)
+      winningRecords.value.unshift(normalized)
       pushLog(
-        `中奖！方法：${methodLabel(data.method)} | 期数：${data.periods} 期 | 奖级：${data.prize_level} | 预测：${data.predicted_reds.join(',')} + ${data.predicted_blue}`,
+        `命中记录！方法：${methodLabel(normalized.method)} | 期数：${normalized.periods} 期 | ${normalized.display_level} | 命中：${normalized.hit_count}个 | 预测：${normalized.predicted_numbers.join(',')}`,
         'warning'
       )
     } catch {
@@ -979,13 +1016,13 @@ onUnmounted(() => {
   font-weight: 700;
 }
 
-.red-ball {
+.primary-ball {
   background: rgba(220, 60, 60, 0.12);
   color: #dc3c3c;
   border: 1px solid rgba(220, 60, 60, 0.3);
 }
 
-.blue-ball {
+.secondary-ball {
   background: rgba(0, 120, 255, 0.12);
   color: #0078ff;
   border: 1px solid rgba(0, 120, 255, 0.3);

@@ -1,3 +1,4 @@
+import logging
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Query
@@ -7,6 +8,7 @@ from backend.utils.formatter import build_response, format_pair_frequency_result
 
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def _frequency_from_data(data: Any) -> Dict[int, int]:
@@ -37,7 +39,7 @@ def _normalize_issue(issue: str) -> str:
 
 
 @router.get("/api/analysis/frequency")
-async def analyze_frequency(
+def analyze_frequency(
     periods: int = Query(300, ge=10, le=5000),
     top_n: int = Query(20, ge=1, le=80),
 ) -> dict:
@@ -67,11 +69,12 @@ async def analyze_frequency(
         }
         return build_response(True, payload, "频率分析完成")
     except Exception as exc:
+        logger.exception(f"操作失败: {exc}")
         return build_response(False, None, f"频率分析失败: {exc}")
 
 
 @router.get("/api/analysis/hot-cold")
-async def analyze_hot_cold(
+def analyze_hot_cold(
     periods: int = Query(300, ge=10, le=5000),
     hot_count: int = Query(10, ge=1, le=40),
     cold_count: int = Query(10, ge=1, le=40),
@@ -96,11 +99,12 @@ async def analyze_hot_cold(
         }
         return build_response(True, payload, "冷热号分析完成")
     except Exception as exc:
+        logger.exception(f"操作失败: {exc}")
         return build_response(False, None, f"冷热号分析失败: {exc}")
 
 
 @router.get("/api/analysis/missing")
-async def analyze_missing(periods: int = Query(300, ge=10, le=5000), top_n: int = Query(20, ge=1, le=80)) -> dict:
+def analyze_missing(periods: int = Query(300, ge=10, le=5000), top_n: int = Query(20, ge=1, le=80)) -> dict:
     try:
         analyzer = get_analyzer_instance()
         data = analyzer.load_data(periods)
@@ -119,11 +123,12 @@ async def analyze_missing(periods: int = Query(300, ge=10, le=5000), top_n: int 
         }
         return build_response(True, payload, "遗漏分析完成")
     except Exception as exc:
+        logger.exception(f"操作失败: {exc}")
         return build_response(False, None, f"遗漏分析失败: {exc}")
 
 
 @router.get("/api/analysis/pair-frequency")
-async def analyze_pair_frequency(
+def analyze_pair_frequency(
     target_issue: Optional[str] = Query(None, description="目标期号"),
     period_count: int = Query(20, ge=1, le=100, description="统计期数"),
     top_n: int = Query(50, ge=1, le=200),
@@ -141,5 +146,5 @@ async def analyze_pair_frequency(
         payload = format_pair_frequency_result(result, top_n=top_n)
         return build_response(True, payload, "数字对频率分析完成")
     except Exception as exc:
+        logger.exception(f"操作失败: {exc}")
         return build_response(False, None, f"数字对频率分析失败: {exc}")
-

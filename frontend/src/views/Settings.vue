@@ -151,7 +151,7 @@ const settings = ref({
 const systemInfo = ref({
   version: 'v2.0.0',
   buildTime: '2024-12-09',
-  appName: '双色球智能预测系统',
+  appName: '快乐8智能预测系统',
   features: [] as string[]
 })
 
@@ -195,7 +195,7 @@ const loadSystemConfig = async () => {
       systemInfo.value = {
         version: `v${version.version}`,
         buildTime: version.build_time ? new Date(version.build_time).toLocaleDateString() : '未知',
-        appName: version.app_name || '双色球智能预测系统',
+        appName: version.app_name || '快乐8智能预测系统',
         features: version.features || []
       }
     }
