@@ -1,47 +1,62 @@
-# 快乐8智能预测系统
+# Happy8 项目
 
-当前仓库已清理前端相关代码，保留后端与核心预测引擎，作为后续重构基线。
+当前仓库已经收口为单一后端主线，便于后续重新开发前端。
 
-## 当前保留内容
+## 当前目录结构
 
-- `backend/`：主 FastAPI 后端服务
-- `src/`：快乐8预测算法与分析引擎
-- `data/`：本地数据文件
-- `deployment/`：后端部署配置
-- `docs/`：现有项目文档
-- `happy8-miniprogram/backend/`：小程序后端服务
-- `happy8-miniprogram/database/`：数据库初始化、迁移、种子数据
-- `happy8-miniprogram/deployment/`：后端部署脚本与 Nginx 配置
+```text
+.
+├── backend/          # 唯一主后端（FastAPI + SQLAlchemy + Alembic）
+├── engine/           # 快乐8算法引擎与分析脚本
+├── infra/            # 数据库初始化、Nginx、部署脚本
+├── docs/             # 项目说明文档
+├── specs/            # 需求、设计、任务拆解
+├── data/             # 本地数据文件
+├── docker-compose.yml
+├── main.py
+└── requirements.txt
+```
 
-## 已移除内容
+## 模块职责
 
-- 根目录 `frontend/` SPA 前端
-- `happy8-miniprogram/frontend/` 小程序前端
-- `happy8-miniprogram/frontend-template/` 前端模板
-- `happy8-miniprogram/happy8-new/` 前端试验工程
-- 微信开发者工程壳与相关前端配置
+- `backend/`：未来前端统一对接的 API 服务。
+- `engine/`：独立算法层，不直接承担 Web 路由职责。
+- `infra/database/`：数据库初始化和种子相关文件。
+- `infra/deployment/`：Nginx 和部署脚本。
+- `specs/`：产品需求和重构任务依据。
 
-## 快速开始
+## 本地开发
 
-### 根目录后端
+### 安装依赖
 
 ```bash
 pip install -r requirements.txt
-python main.py web
 ```
 
-### 小程序后端
+### 启动后端
 
 ```bash
-cd happy8-miniprogram/backend
-pip install -r requirements.txt
-python start.py
+python main.py api
 ```
 
-## 重构建议
+或直接：
 
-建议后续按以下顺序推进：
+```bash
+python backend/start.py
+```
 
-1. 确认保留哪一套后端作为主线。
-2. 收口重复文档与部署目录。
-3. 统一数据模型、配置项和启动方式。
+### 运行算法演示
+
+```bash
+python main.py demo
+```
+
+### Docker 启动
+
+```bash
+docker compose up -d
+```
+
+## 重构原则
+
+后续前端重建时，只面向 `backend/` 的 API 契约开发，不再新增第二套后端目录。
