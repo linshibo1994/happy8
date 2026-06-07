@@ -40,7 +40,7 @@ import seaborn as sns
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from sklearn.model_selection import train_test_split, cross_val_score
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
-from sklearn.cluster import KMeans, DBSCAN
+from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
 from sklearn.naive_bayes import GaussianNB
 from sklearn.linear_model import LogisticRegression
@@ -3824,21 +3824,19 @@ class TransformerPredictor:
 
 
 class GraphNeuralNetworkPredictor:
-    """图神经网络预测器 - 基于号码关系图的预测"""
+    """图传播预测器 - 基于号码关系图的确定性预测"""
 
     def __init__(self, analyzer):
         self.analyzer = analyzer
         self.model = None
 
     def predict(self, data: pd.DataFrame, count: int = 30, **kwargs) -> Tuple[List[int], List[float]]:
-        """图神经网络预测"""
-        print(f"🔄 执行图神经网络预测...")
+        """图传播预测"""
+        print(f"🔄 执行图传播预测...")
         print(f"分析数据: {len(data)}期")
 
         try:
             import torch
-            import torch.nn as nn
-            import torch.nn.functional as F
 
             # 检查数据量
             if len(data) < 20:
@@ -3846,24 +3844,26 @@ class GraphNeuralNetworkPredictor:
                 frequency_predictor = FrequencyPredictor(self.analyzer)
                 return frequency_predictor.predict(data, count)
 
-            # 构建号码关系图
-            adjacency_matrix, node_features = self._build_number_graph(data)
+            newest_first_data = self._sort_newest_first(data)
+            train_samples = self._prepare_graph_training_samples(newest_first_data)
+            if not train_samples:
+                print("⚠️ 图传播训练样本不足，使用频率分析作为后备")
+                frequency_predictor = FrequencyPredictor(self.analyzer)
+                return frequency_predictor.predict(data, count)
 
-            # 构建和训练GNN模型
             device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
             print(f"使用设备: {device}")
 
-            model = self._build_gnn_model().to(device)
+            score_weights = self._train_gnn_model(train_samples)
 
-            # 训练模型
-            self._train_gnn_model(model, adjacency_matrix, node_features, data, device)
+            # 只使用当前可见历史构建预测图，避免把目标期结果泄露进特征。
+            adjacency_matrix, node_features = self._build_number_graph(newest_first_data)
 
-            # 预测
             predicted_numbers, confidence_scores = self._predict_with_gnn(
-                model, adjacency_matrix, node_features, device, count
+                score_weights, adjacency_matrix, node_features, count
             )
 
-            print(f"✅ 图神经网络预测完成")
+            print(f"✅ 图传播预测完成")
             print(f"预测号码: {predicted_numbers[:10]}...")
             print(f"平均置信度: {np.mean(confidence_scores):.3f}")
 
@@ -3874,7 +3874,7 @@ class GraphNeuralNetworkPredictor:
             frequency_predictor = FrequencyPredictor(self.analyzer)
             return frequency_predictor.predict(data, count)
         except Exception as e:
-            print(f"⚠️ 图神经网络预测失败: {e}")
+            print(f"⚠️ 图传播预测失败: {e}")
             frequency_predictor = FrequencyPredictor(self.analyzer)
             return frequency_predictor.predict(data, count)
 
@@ -3907,6 +3907,56 @@ class GraphNeuralNetworkPredictor:
         print(f"图构建完成: 80个节点, {np.sum(adjacency_matrix > 0)//2}条边")
 
         return adjacency_matrix, node_features
+
+    @staticmethod
+    def _sort_newest_first(data: pd.DataFrame) -> pd.DataFrame:
+        """统一返回最新期在前的数据。"""
+        if data is None or data.empty:
+            return pd.DataFrame() if data is None else data.copy()
+
+        data_sorted = data.copy()
+        if 'issue' in data_sorted.columns:
+            data_sorted['issue'] = data_sorted['issue'].astype(str)
+            data_sorted = data_sorted.sort_values('issue', ascending=False)
+
+        return data_sorted.reset_index(drop=True)
+
+    @staticmethod
+    def _sort_oldest_first(data: pd.DataFrame) -> pd.DataFrame:
+        """统一返回最旧期在前的数据。"""
+        if data is None or data.empty:
+            return pd.DataFrame() if data is None else data.copy()
+
+        data_sorted = data.copy()
+        if 'issue' in data_sorted.columns:
+            data_sorted['issue'] = data_sorted['issue'].astype(str)
+            data_sorted = data_sorted.sort_values('issue', ascending=True)
+
+        return data_sorted.reset_index(drop=True)
+
+    @staticmethod
+    def _extract_row_numbers(row: pd.Series) -> List[int]:
+        """从一行开奖数据中提取20个号码。"""
+        return [int(row[f'num{i}']) for i in range(1, 21)]
+
+    @staticmethod
+    def _rank_number_scores(number_scores: Dict[int, float], count: int) -> Tuple[List[int], List[float]]:
+        """按分数降序、号码升序稳定排序，并把分数归一化到0-1。"""
+        valid_scores = {
+            int(num): float(score)
+            for num, score in number_scores.items()
+            if 1 <= int(num) <= 80 and np.isfinite(score)
+        }
+        sorted_items = sorted(valid_scores.items(), key=lambda item: (-item[1], item[0]))
+        selected = sorted_items[:min(max(int(count), 0), len(sorted_items))]
+        predicted_numbers = [num for num, _ in selected]
+        raw_scores = [score for _, score in selected]
+        max_score = max(raw_scores) if raw_scores else 0
+        confidence_scores = [
+            float(score / max_score) if max_score > 0 else 0.0
+            for score in raw_scores
+        ]
+        return predicted_numbers, confidence_scores
 
     def _build_node_features(self, data: pd.DataFrame):
         """构建节点特征"""
@@ -3942,128 +3992,74 @@ class GraphNeuralNetworkPredictor:
 
         return node_features
 
-    def _build_gnn_model(self):
-        """构建图神经网络模型"""
-        import torch
-        import torch.nn as nn
-        import torch.nn.functional as F
+    def _prepare_graph_training_samples(self, data: pd.DataFrame, window_size: int = 12):
+        """按时间顺序构造“历史窗口 -> 下一期号码”的训练样本。"""
+        ordered_data = self._sort_oldest_first(data)
+        if len(ordered_data) <= window_size:
+            return []
 
-        class GraphConvLayer(nn.Module):
-            def __init__(self, in_features, out_features):
-                super(GraphConvLayer, self).__init__()
-                self.linear = nn.Linear(in_features, out_features)
+        samples = []
+        for end_idx in range(window_size, len(ordered_data)):
+            history_window = ordered_data.iloc[end_idx - window_size:end_idx].reset_index(drop=True)
+            target_numbers = self._extract_row_numbers(ordered_data.iloc[end_idx])
+            adjacency_matrix, node_features = self._build_number_graph(history_window)
+            propagated_scores = self._propagate_graph_scores(adjacency_matrix, node_features)
+            target_vector = np.zeros(80)
+            for num in target_numbers:
+                if 1 <= num <= 80:
+                    target_vector[num - 1] = 1.0
+            samples.append((propagated_scores, target_vector))
 
-            def forward(self, x, adj):
-                # x: (num_nodes, in_features)
-                # adj: (num_nodes, num_nodes)
-                support = self.linear(x)
-                output = torch.mm(adj, support)
-                return F.relu(output)
+        return samples
 
-        class GNNModel(nn.Module):
-            def __init__(self, input_dim, hidden_dim, output_dim):
-                super(GNNModel, self).__init__()
-                self.gc1 = GraphConvLayer(input_dim, hidden_dim)
-                self.gc2 = GraphConvLayer(hidden_dim, hidden_dim)
-                self.gc3 = GraphConvLayer(hidden_dim, output_dim)
-                self.dropout = nn.Dropout(0.2)
+    def _train_gnn_model(self, train_samples):
+        """用正确样本维度学习确定性图传播特征权重。"""
+        print("训练图传播评分权重...")
 
-            def forward(self, x, adj):
-                x = self.gc1(x, adj)
-                x = self.dropout(x)
-                x = self.gc2(x, adj)
-                x = self.dropout(x)
-                x = self.gc3(x, adj)
-                return torch.sigmoid(x)
+        X = np.vstack([sample_scores for sample_scores, _ in train_samples])
+        y = np.vstack([target_vector for _, target_vector in train_samples])
 
-        return GNNModel(input_dim=5, hidden_dim=32, output_dim=1)
+        positive_mean = (X * y).sum(axis=0) / (y.sum(axis=0) + 1e-9)
+        negative_mask = 1.0 - y
+        negative_mean = (X * negative_mask).sum(axis=0) / (negative_mask.sum(axis=0) + 1e-9)
+        weights = positive_mean - negative_mean
 
-    def _train_gnn_model(self, model, adjacency_matrix, node_features, data, device):
-        """训练GNN模型"""
-        import torch
-        import torch.nn as nn
+        weights = weights - np.min(weights)
+        max_weight = np.max(weights)
+        if max_weight > 0:
+            weights = weights / max_weight
+        else:
+            weights = np.ones(80)
 
-        print("开始训练图神经网络模型...")
+        print(f"图传播训练样本: {len(train_samples)}个")
+        return weights
 
-        # 转换为张量
-        adj_tensor = torch.FloatTensor(adjacency_matrix).to(device)
-        features_tensor = torch.FloatTensor(node_features).to(device)
+    def _propagate_graph_scores(self, adjacency_matrix, node_features):
+        """执行确定性两跳图传播，返回80个号码的结构分数。"""
+        adj = np.array(adjacency_matrix, dtype=float)
+        adj = adj + np.eye(80)
+        row_sums = adj.sum(axis=1, keepdims=True)
+        row_sums[row_sums == 0] = 1.0
+        normalized_adj = adj / row_sums
 
-        # 构建训练目标 (每期出现的号码为正样本)
-        targets = torch.zeros(80, len(data)).to(device)
-        for idx, (_, row) in enumerate(data.iterrows()):
-            numbers = [int(row[f'num{i}']) for i in range(1, 21)]
-            for num in numbers:
-                targets[num - 1, idx] = 1.0
+        base_scores = (
+            node_features[:, 0] * 0.45
+            + node_features[:, 2] * 0.25
+            + node_features[:, 4] * 0.10
+            + (1 - node_features[:, 1]) * 0.20
+        )
 
-        # 优化器和损失函数
-        optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
-        criterion = nn.BCELoss()
+        first_hop = normalized_adj.dot(base_scores)
+        second_hop = normalized_adj.dot(first_hop)
+        scores = base_scores * 0.50 + first_hop * 0.30 + second_hop * 0.20
+        return scores
 
-        # 训练循环
-        model.train()
-        num_epochs = 100
-
-        for epoch in range(num_epochs):
-            optimizer.zero_grad()
-
-            # 前向传播
-            outputs = model(features_tensor, adj_tensor).squeeze()  # (80,)
-
-            # 计算平均损失 (对所有期的平均)
-            total_loss = 0
-            for period_idx in range(targets.shape[1]):
-                period_targets = targets[:, period_idx]
-                loss = criterion(outputs, period_targets)
-                total_loss += loss
-
-            avg_loss = total_loss / targets.shape[1]
-            avg_loss.backward()
-            optimizer.step()
-
-            if (epoch + 1) % 20 == 0:
-                print(f"Epoch {epoch + 1}/{num_epochs}, Loss: {avg_loss.item():.4f}")
-
-        print("图神经网络模型训练完成")
-
-    def _predict_with_gnn(self, model, adjacency_matrix, node_features, device, count):
-        """使用GNN模型进行预测"""
-        import torch
-
-        model.eval()
-
-        # 转换为张量
-        adj_tensor = torch.FloatTensor(adjacency_matrix).to(device)
-        features_tensor = torch.FloatTensor(node_features).to(device)
-
-        with torch.no_grad():
-            output = model(features_tensor, adj_tensor)
-            probabilities = output.squeeze().cpu().numpy()
-
-            # 确保概率数组有80个元素
-            if len(probabilities.shape) == 0:
-                # 如果是标量，创建随机概率
-                probabilities = np.random.random(80)
-            elif len(probabilities) != 80:
-                # 如果长度不对，使用节点特征的加权和作为概率
-                probabilities = np.random.random(80)
-                for i in range(min(len(probabilities), 80)):
-                    # 基于节点特征计算概率
-                    feature_sum = np.sum(node_features[i])
-                    probabilities[i] = feature_sum / (1 + feature_sum)
-
-        # 添加随机扰动避免完全相同的概率
-        probabilities += np.random.normal(0, 0.01, 80)
-        probabilities = np.abs(probabilities)  # 确保非负
-
-        # 选择概率最高的号码
-        number_probs = [(i + 1, prob) for i, prob in enumerate(probabilities)]
-        number_probs.sort(key=lambda x: x[1], reverse=True)
-
-        predicted_numbers = [num for num, _ in number_probs[:count]]
-        confidence_scores = [float(prob) for _, prob in number_probs[:count]]
-
-        return predicted_numbers, confidence_scores
+    def _predict_with_gnn(self, score_weights, adjacency_matrix, node_features, count):
+        """使用确定性图传播评分进行预测。"""
+        propagated_scores = self._propagate_graph_scores(adjacency_matrix, node_features)
+        probabilities = propagated_scores * (0.5 + 0.5 * score_weights)
+        number_scores = {i + 1: float(score) for i, score in enumerate(probabilities)}
+        return self._rank_number_scores(number_scores, count)
 
 
 class MonteCarloPredictor:
@@ -4267,7 +4263,7 @@ class MonteCarloPredictor:
 
 
 class ClusteringPredictor:
-    """聚类分析预测器 - 基于数据聚类的模式识别预测"""
+    """KMeans聚类预测器 - 基于历史开奖结构相似性的模式识别预测"""
 
     def __init__(self, analyzer):
         self.analyzer = analyzer
@@ -4278,9 +4274,16 @@ class ClusteringPredictor:
         print(f"分析数据: {len(data)}期")
 
         try:
-            from sklearn.cluster import KMeans, DBSCAN, AgglomerativeClustering
-            from sklearn.metrics import silhouette_score
             from sklearn.preprocessing import StandardScaler
+
+            if data is None or data.empty:
+                data = pd.DataFrame() if data is None else data.copy()
+            elif 'issue' in data.columns:
+                data = data.copy()
+                data['issue'] = data['issue'].astype(str)
+                data = data.sort_values('issue', ascending=False).reset_index(drop=True)
+            else:
+                data = data.copy().reset_index(drop=True)
 
             # 特征提取
             features = self._extract_clustering_features(data)
@@ -4294,12 +4297,12 @@ class ClusteringPredictor:
             scaler = StandardScaler()
             features_scaled = scaler.fit_transform(features)
 
-            # 多算法聚类融合
-            clustering_results = self._multi_algorithm_clustering(features_scaled)
+            # KMeans聚类
+            clustering_results = self._kmeans_clustering(features_scaled)
 
             # 聚类中心预测
             predicted_numbers, confidence_scores = self._predict_from_clusters(
-                clustering_results, features, data, count
+                clustering_results, features_scaled, data, count
             )
 
             print(f"✅ 聚类分析预测完成")
@@ -4376,9 +4379,9 @@ class ClusteringPredictor:
 
         return np.array(features)
 
-    def _multi_algorithm_clustering(self, features_scaled):
-        """多算法聚类融合"""
-        from sklearn.cluster import KMeans, DBSCAN, AgglomerativeClustering
+    def _kmeans_clustering(self, features_scaled):
+        """执行KMeans聚类并选择轮廓系数较优的K值。"""
+        from sklearn.cluster import KMeans
         from sklearn.metrics import silhouette_score
 
         clustering_results = {}
@@ -4387,7 +4390,8 @@ class ClusteringPredictor:
         best_kmeans_score = -1
         best_kmeans_k = 2
 
-        for k in range(2, min(8, len(features_scaled) // 2)):
+        max_k = min(8, len(features_scaled) // 2)
+        for k in range(2, max_k + 1):
             try:
                 kmeans = KMeans(n_clusters=k, random_state=42, n_init=10)
                 labels = kmeans.fit_predict(features_scaled)
@@ -4397,7 +4401,7 @@ class ClusteringPredictor:
                     if score > best_kmeans_score:
                         best_kmeans_score = score
                         best_kmeans_k = k
-            except:
+            except Exception:
                 continue
 
         # 使用最佳K值进行K-means聚类
@@ -4408,11 +4412,15 @@ class ClusteringPredictor:
             'score': best_kmeans_score
         }
 
-        print(f"聚类算法结果: K-means (K={best_kmeans_k}, 轮廓系数={best_kmeans_score:.3f})")
+        print(f"KMeans聚类结果: K={best_kmeans_k}, 轮廓系数={best_kmeans_score:.3f}")
 
         return clustering_results
 
-    def _predict_from_clusters(self, clustering_results, features, data, count):
+    def _multi_algorithm_clustering(self, features_scaled):
+        """向后兼容旧调用；当前实现仅使用KMeans。"""
+        return self._kmeans_clustering(features_scaled)
+
+    def _predict_from_clusters(self, clustering_results, features_scaled, data, count):
         """基于聚类结果进行预测"""
         if not clustering_results:
             # 如果聚类失败，使用频率分析
@@ -4426,12 +4434,12 @@ class ClusteringPredictor:
         algorithm_name, result = best_clustering
         labels = result['labels']
 
-        print(f"使用最佳聚类算法: {algorithm_name} (轮廓系数: {result['score']:.3f})")
+        print(f"使用聚类算法: {algorithm_name} (轮廓系数: {result['score']:.3f})")
 
         # 找到最近的聚类中心
         if 'centers' in result:
             # K-means有聚类中心
-            last_feature = features[-1]  # 最近一期的特征
+            last_feature = features_scaled[0]  # 最新一期的标准化特征
 
             # 计算到各聚类中心的距离
             centers = result['centers']
@@ -4442,8 +4450,8 @@ class ClusteringPredictor:
             cluster_indices = [i for i, label in enumerate(labels) if label == closest_cluster]
         else:
             # 其他算法，找到最近样本所属的聚类
-            last_feature = features[-1]
-            distances = [np.linalg.norm(last_feature - features[i]) for i in range(len(features))]
+            last_feature = features_scaled[0]
+            distances = [np.linalg.norm(last_feature - features_scaled[i]) for i in range(len(features_scaled))]
             closest_sample_idx = np.argmin(distances)
             target_cluster = labels[closest_sample_idx]
 
