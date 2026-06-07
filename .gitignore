@@ -173,6 +173,9 @@ data
 
 # 忽略docs文件夹
 docs
+!docs/
+!docs/前端重构/
+!docs/前端重构/**
 
 # 忽略codebuddy
 .codebuddy
