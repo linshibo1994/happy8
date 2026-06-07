@@ -22,6 +22,7 @@ import sys
 import time
 import json
 import pickle
+import hashlib
 import argparse
 import warnings
 from datetime import datetime, timedelta
@@ -47,6 +48,18 @@ from sklearn.tree import DecisionTreeClassifier
 from sklearn.svm import SVC
 import scipy.stats as stats
 from scipy.spatial.distance import pdist, squareform
+
+# 快乐8理论基线：每期从80个号码中无放回开出20个，顺序不限。
+NUMBER_RANGE = range(1, 81)
+DRAW_NUMBER_COUNT = 20
+TOTAL_PAIR_TYPES = 80 * 79 // 2
+THEORETICAL_PAIR_PROBABILITY = (DRAW_NUMBER_COUNT / 80) * ((DRAW_NUMBER_COUNT - 1) / 79)
+NUMBER_COLUMNS = [f'num{i}' for i in range(1, DRAW_NUMBER_COUNT + 1)]
+ALL_NUMBER_PAIRS = [
+    (num1, num2)
+    for num1 in NUMBER_RANGE
+    for num2 in range(num1 + 1, 81)
+]
 
 # 抑制警告
 warnings.filterwarnings('ignore')
@@ -249,10 +262,14 @@ class PairFrequencyResult:
     actual_periods: int                  # 实际统计期数
     start_issue: str                     # 起始期号
     end_issue: str                       # 结束期号
-    total_pairs: int                     # 分析的数字对总数
+    total_pairs: int                     # 分析的数字对总数，固定为全量 C(80,2)=3160
     frequency_items: List[PairFrequencyItem]  # 频率项列表
     analysis_time: datetime              # 分析时间
     execution_time: float                # 执行耗时(秒)
+    valid_periods: Optional[int] = None   # 实际参与统计的有效期数
+    skipped_periods: int = 0              # 因数据无效跳过的行数
+    total_pair_types: int = TOTAL_PAIR_TYPES  # 快乐8理论数字对类型数 C(80,2)
+    theoretical_pair_probability: float = THEORETICAL_PAIR_PROBABILITY * 100
     
     def __post_init__(self):
         """数据验证"""
@@ -266,6 +283,17 @@ class PairFrequencyResult:
             raise ValueError("数字对总数不能为负数")
         if self.execution_time < 0:
             raise ValueError("执行时间不能为负数")
+        if self.valid_periods is None:
+            self.valid_periods = self.actual_periods
+        if self.valid_periods < 0:
+            raise ValueError("有效期数不能为负数")
+        if self.skipped_periods < 0:
+            raise ValueError("跳过期数不能为负数")
+
+    @property
+    def skipped_invalid_rows(self) -> int:
+        """因数据无效被跳过的行数。"""
+        return self.skipped_periods
     
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典格式"""
@@ -276,6 +304,12 @@ class PairFrequencyResult:
             'start_issue': self.start_issue,
             'end_issue': self.end_issue,
             'total_pairs': self.total_pairs,
+            'unique_observed_pairs': sum(1 for item in self.frequency_items if item.count > 0),
+            'total_pair_types': self.total_pair_types,
+            'valid_periods': self.valid_periods,
+            'skipped_periods': self.skipped_periods,
+            'skipped_invalid_rows': self.skipped_periods,
+            'theoretical_pair_probability': self.theoretical_pair_probability,
             'analysis_time': self.analysis_time.isoformat(),
             'execution_time': self.execution_time,
             'frequency_items': [
@@ -310,6 +344,12 @@ class PairFrequencyResult:
             'start_issue': self.start_issue,
             'end_issue': self.end_issue,
             'total_pairs': self.total_pairs,
+            'unique_observed_pairs': sum(1 for item in self.frequency_items if item.count > 0),
+            'total_pair_types': self.total_pair_types,
+            'valid_periods': self.valid_periods,
+            'skipped_periods': self.skipped_periods,
+            'skipped_invalid_rows': self.skipped_periods,
+            'theoretical_pair_probability': self.theoretical_pair_probability,
             'analysis_time': self.analysis_time.isoformat(),
             'execution_time': self.execution_time
         }
@@ -320,7 +360,8 @@ class PairFrequencyResult:
         """获取统计摘要"""
         if not self.frequency_items:
             return {
-                'total_unique_pairs': 0,
+                'total_unique_pairs': self.total_pairs,
+                'observed_pair_count': 0,
                 'max_frequency': 0,
                 'min_frequency': 0,
                 'avg_frequency': 0,
@@ -330,7 +371,8 @@ class PairFrequencyResult:
         frequencies = [item.count for item in self.frequency_items]
         
         return {
-            'total_unique_pairs': len(self.frequency_items),
+            'total_unique_pairs': self.total_pairs,
+            'observed_pair_count': sum(1 for item in self.frequency_items if item.count > 0),
             'max_frequency': max(frequencies),
             'min_frequency': min(frequencies),
             'avg_frequency': sum(frequencies) / len(frequencies),
@@ -366,14 +408,16 @@ class PairFrequencyResult:
 数字对频率分析报告
 ==================
 目标期号: {self.target_issue}
-统计范围: {self.start_issue} - {self.end_issue} (共{self.actual_periods}期)
+统计范围: {self.start_issue} - {self.end_issue} (有效{self.actual_periods}期)
 请求期数: {self.requested_periods}期
-实际期数: {self.actual_periods}期
+有效期数: {self.actual_periods}期
+跳过无效行: {self.skipped_periods}行
 分析时间: {self.analysis_time.strftime('%Y-%m-%d %H:%M:%S')}
 执行耗时: {self.execution_time:.3f}秒
 
 统计摘要:
-- 不同数字对总数: {summary['total_unique_pairs']}
+- 全量数字对总数: {self.total_pairs}
+- 出现过的数字对数: {summary['observed_pair_count']}
 - 最高出现频率: {summary['max_frequency']}次
 - 最低出现频率: {summary['min_frequency']}次
 - 平均出现频率: {summary['avg_frequency']:.2f}次
@@ -412,7 +456,11 @@ class PairFrequencyResult:
                 {'项目': '目标期号', '值': self.target_issue},
                 {'项目': '统计范围', '值': f"{self.start_issue} - {self.end_issue}"},
                 {'项目': '实际期数', '值': self.actual_periods},
-                {'项目': '数字对总数', '值': self.total_pairs},
+                {'项目': '有效期数', '值': self.valid_periods},
+                {'项目': '跳过无效行', '值': self.skipped_periods},
+                {'项目': '出现过的数字对数', '值': sum(1 for item in self.frequency_items if item.count > 0)},
+                {'项目': '理论数字对类型数', '值': self.total_pair_types},
+                {'项目': '固定数字对理论出现率', '值': f"{self.theoretical_pair_probability:.4f}%"},
                 {'项目': '最高频率', '值': f"{summary['max_frequency']}次"},
                 {'项目': '最低频率', '值': f"{summary['min_frequency']}次"},
                 {'项目': '平均频率', '值': f"{summary['avg_frequency']:.2f}次"},
@@ -475,7 +523,7 @@ class PairFrequencyResult:
     <div class="header">
         <h1>🔢 数字对频率分析报告</h1>
         <p><strong>目标期号:</strong> {self.target_issue}</p>
-        <p><strong>统计范围:</strong> {self.start_issue} - {self.end_issue} (共{self.actual_periods}期)</p>
+        <p><strong>统计范围:</strong> {self.start_issue} - {self.end_issue} (有效{self.actual_periods}期，跳过无效行{self.skipped_periods}行)</p>
         <p><strong>分析时间:</strong> {self.analysis_time.strftime('%Y-%m-%d %H:%M:%S')}</p>
         <p><strong>执行耗时:</strong> {self.execution_time:.3f}秒</p>
     </div>
@@ -483,7 +531,10 @@ class PairFrequencyResult:
     <div class="summary">
         <h2>📈 统计摘要</h2>
         <div class="summary-item">
-            <strong>不同数字对总数:</strong> {summary['total_unique_pairs']}
+            <strong>全量数字对总数:</strong> {self.total_pairs}
+        </div>
+        <div class="summary-item">
+            <strong>出现过的数字对数:</strong> {summary['observed_pair_count']}
         </div>
         <div class="summary-item">
             <strong>最高出现频率:</strong> {summary['max_frequency']}次
@@ -560,6 +611,14 @@ class PairFrequencyResult:
         SubElement(info, 'StartIssue').text = self.start_issue
         SubElement(info, 'EndIssue').text = self.end_issue
         SubElement(info, 'TotalPairs').text = str(self.total_pairs)
+        SubElement(info, 'UniqueObservedPairs').text = str(
+            sum(1 for item in self.frequency_items if item.count > 0)
+        )
+        SubElement(info, 'TotalPairTypes').text = str(self.total_pair_types)
+        SubElement(info, 'ValidPeriods').text = str(self.valid_periods)
+        SubElement(info, 'SkippedPeriods').text = str(self.skipped_periods)
+        SubElement(info, 'SkippedInvalidRows').text = str(self.skipped_periods)
+        SubElement(info, 'TheoreticalPairProbability').text = str(self.theoretical_pair_probability)
         SubElement(info, 'AnalysisTime').text = self.analysis_time.isoformat()
         SubElement(info, 'ExecutionTime').text = str(self.execution_time)
         
@@ -567,6 +626,7 @@ class PairFrequencyResult:
         summary = self.get_summary()
         summary_elem = SubElement(root, 'Summary')
         SubElement(summary_elem, 'TotalUniquePairs').text = str(summary['total_unique_pairs'])
+        SubElement(summary_elem, 'ObservedPairCount').text = str(summary.get('observed_pair_count', 0))
         SubElement(summary_elem, 'MaxFrequency').text = str(summary['max_frequency'])
         SubElement(summary_elem, 'MinFrequency').text = str(summary['min_frequency'])
         SubElement(summary_elem, 'AvgFrequency').text = str(summary['avg_frequency'])
@@ -584,7 +644,6 @@ class PairFrequencyResult:
         rough_string = tostring(root, 'utf-8')
         reparsed = minidom.parseString(rough_string)
         return reparsed.toprettyxml(indent="  ")
-    
     def export_to_file(self, filepath: str, format_type: str = 'auto') -> bool:
         """
         导出到文件
@@ -654,6 +713,16 @@ class PairFrequencyResult:
 
 
 # 数字对分析工具函数
+def extract_row_numbers(row: pd.Series) -> List[int]:
+    """从DataFrame行中提取20个开奖号码。"""
+    return [int(row[f'num{i}']) for i in range(1, DRAW_NUMBER_COUNT + 1)]
+
+
+def generate_all_number_pairs() -> List[Tuple[int, int]]:
+    """生成快乐8 1-80范围内全部3160个无序数字对。"""
+    return ALL_NUMBER_PAIRS.copy()
+
+
 def extract_number_pairs(numbers: List[int]) -> List[Tuple[int, int]]:
     """
     从20个开奖号码中提取所有两位数组合
@@ -668,8 +737,8 @@ def extract_number_pairs(numbers: List[int]) -> List[Tuple[int, int]]:
         ValueError: 当输入数据无效时
         
     Example:
-        >>> extract_number_pairs([1, 2, 3, 4, 5])
-        [(1, 2), (1, 3), (1, 4), (1, 5), (2, 3), (2, 4), (2, 5), (3, 4), (3, 5), (4, 5)]
+        >>> len(extract_number_pairs(list(range(1, 21))))
+        190
     """
     # 输入验证
     if not isinstance(numbers, (list, tuple)):
@@ -700,7 +769,6 @@ def extract_number_pairs(numbers: List[int]) -> List[Tuple[int, int]]:
     pairs.sort()
     
     return pairs
-
 
 def validate_issue_format(issue: str) -> bool:
     """
@@ -783,7 +851,9 @@ def _calculate_range_from_data(target_issue: str, period_count: int, data: pd.Da
     基于实际数据计算期号范围
     """
     # 确保数据按期号排序
-    data_sorted = data.sort_values('issue')
+    data_sorted = data.copy()
+    data_sorted['issue'] = data_sorted['issue'].astype(str)
+    data_sorted = data_sorted.sort_values('issue')
     issues = data_sorted['issue'].tolist()
     
     # 检查目标期号是否存在
@@ -845,15 +915,24 @@ def get_available_issues_in_range(start_issue: str, end_issue: str, data: pd.Dat
     if data.empty:
         return []
     
-    # 筛选范围内的数据
-    mask = (data['issue'] >= start_issue) & (data['issue'] <= end_issue)
-    filtered_data = data[mask]
+    data_for_range = data.copy()
+    data_for_range['issue'] = data_for_range['issue'].astype(str)
+    mask = (
+        (data_for_range['issue'] >= str(start_issue))
+        & (data_for_range['issue'] <= str(end_issue))
+    )
+    filtered_data = data_for_range[mask]
     
     # 按期号排序并返回期号列表
     return sorted(filtered_data['issue'].tolist())
 
 
-def count_pair_frequencies(data: pd.DataFrame, start_issue: str, end_issue: str) -> Dict[Tuple[int, int], int]:
+def count_pair_frequencies(
+    data: pd.DataFrame,
+    start_issue: str,
+    end_issue: str,
+    return_metadata: bool = False
+) -> Union[Dict[Tuple[int, int], int], Tuple[Dict[Tuple[int, int], int], int, int]]:
     """
     统计指定期号范围内数字对的出现频率
     
@@ -861,9 +940,10 @@ def count_pair_frequencies(data: pd.DataFrame, start_issue: str, end_issue: str)
         data: 历史开奖数据DataFrame
         start_issue: 起始期号
         end_issue: 结束期号
+        return_metadata: 是否返回有效期数和跳过无效行数
         
     Returns:
-        数字对出现频率字典，键为(num1, num2)，值为出现次数
+        数字对出现频率字典；return_metadata=True时额外返回有效期数与跳过无效行数
         
     Raises:
         ValueError: 当输入数据无效时
@@ -876,32 +956,44 @@ def count_pair_frequencies(data: pd.DataFrame, start_issue: str, end_issue: str)
     """
     # 输入验证
     if data.empty:
-        return {}
+        return ({}, 0, 0) if return_metadata else {}
     
-    required_cols = ['issue'] + [f'num{i}' for i in range(1, 21)]
+    required_cols = ['issue'] + NUMBER_COLUMNS
     missing_cols = [col for col in required_cols if col not in data.columns]
     if missing_cols:
         raise ValueError(f"数据缺少必要列: {missing_cols}")
     
-    # 筛选指定范围的数据
-    mask = (data['issue'] >= start_issue) & (data['issue'] <= end_issue)
-    filtered_data = data[mask]
+    data_for_range = data.copy()
+    data_for_range['issue'] = data_for_range['issue'].astype(str)
+    mask = (
+        (data_for_range['issue'] >= str(start_issue))
+        & (data_for_range['issue'] <= str(end_issue))
+    )
+    filtered_data = data_for_range[mask]
     
     if filtered_data.empty:
-        return {}
+        return ({}, 0, 0) if return_metadata else {}
     
     # 统计数字对频率
     pair_counts = {}
+    valid_periods = 0
+    skipped_periods = 0
     
     for _, row in filtered_data.iterrows():
         # 提取当期的20个开奖号码
-        numbers = [int(row[f'num{i}']) for i in range(1, 21)]
+        try:
+            numbers = extract_row_numbers(row)
+        except Exception:
+            skipped_periods += 1
+            continue
         
         # 验证号码有效性
-        if len(set(numbers)) != 20:
+        if len(set(numbers)) != DRAW_NUMBER_COUNT:
+            skipped_periods += 1
             continue  # 跳过有重复号码的无效数据
         
-        if not all(1 <= num <= 80 for num in numbers):
+        if not all(num in NUMBER_RANGE for num in numbers):
+            skipped_periods += 1
             continue  # 跳过号码范围无效的数据
         
         # 提取所有数字对
@@ -911,11 +1003,15 @@ def count_pair_frequencies(data: pd.DataFrame, start_issue: str, end_issue: str)
             # 统计每个数字对的出现次数
             for pair in pairs:
                 pair_counts[pair] = pair_counts.get(pair, 0) + 1
+            valid_periods += 1
                 
         except ValueError:
             # 跳过无效的号码组合
+            skipped_periods += 1
             continue
     
+    if return_metadata:
+        return pair_counts, valid_periods, skipped_periods
     return pair_counts
 
 
@@ -936,12 +1032,16 @@ def sort_pair_frequencies(pair_counts: Dict[Tuple[int, int], int], total_periods
         >>> items[0].pair
         (5, 15)
     """
-    if not pair_counts or total_periods <= 0:
-        return []
+    if total_periods <= 0:
+        return [
+            PairFrequencyItem(pair=pair, count=0, percentage=0.0)
+            for pair in generate_all_number_pairs()
+        ]
     
-    # 转换为PairFrequencyItem列表
+    # 转换为PairFrequencyItem列表，未出现的数字对也保留为0频次，保证3160全量口径。
     frequency_items = []
-    for pair, count in pair_counts.items():
+    for pair in generate_all_number_pairs():
+        count = pair_counts.get(pair, 0)
         percentage = (count / total_periods) * 100
         item = PairFrequencyItem(
             pair=pair,
@@ -980,10 +1080,12 @@ def analyze_pair_frequency_core(data: pd.DataFrame, target_issue: str, period_co
         )
         
         # 统计数字对频率
-        pair_counts = count_pair_frequencies(data, start_issue, end_issue)
+        pair_counts, valid_periods, skipped_periods = count_pair_frequencies(
+            data, start_issue, end_issue, return_metadata=True
+        )
         
         # 排序和格式化结果
-        frequency_items = sort_pair_frequencies(pair_counts, actual_periods)
+        frequency_items = sort_pair_frequencies(pair_counts, valid_periods)
         
         # 计算执行时间
         execution_time = (datetime.now() - start_time).total_seconds()
@@ -992,13 +1094,15 @@ def analyze_pair_frequency_core(data: pd.DataFrame, target_issue: str, period_co
         result = PairFrequencyResult(
             target_issue=target_issue,
             requested_periods=period_count,
-            actual_periods=actual_periods,
+            actual_periods=valid_periods,
             start_issue=start_issue,
             end_issue=end_issue,
-            total_pairs=len(frequency_items),
+            total_pairs=TOTAL_PAIR_TYPES,
             frequency_items=frequency_items,
             analysis_time=start_time,
-            execution_time=execution_time
+            execution_time=execution_time,
+            valid_periods=valid_periods,
+            skipped_periods=skipped_periods
         )
         
         return result
@@ -1360,15 +1464,6 @@ class PairFrequencyAnalyzer:
         # 输入验证
         self._validate_inputs(target_issue, period_count)
         
-        # 检查缓存
-        cache_key = self._get_cache_key(target_issue, period_count)
-        cached_result = None
-        if use_cache:
-            cached_result = self.cache.get(cache_key)
-            if cached_result is not None:
-                self.logger.info(f"使用缓存结果: {cache_key}")
-                return cached_result
-        
         # 记录分析开始
         self.logger.info(f"开始分析数字对频率: 期号={target_issue}, 期数={period_count}")
         
@@ -1376,6 +1471,19 @@ class PairFrequencyAnalyzer:
             # 获取历史数据
             data = self._get_historical_data()
             data_size = len(data) if not data.empty else 0
+            cache_key = self._get_cache_key(target_issue, period_count, data)
+
+            if use_cache:
+                cached_result = self.cache.get(cache_key)
+                if cached_result is not None:
+                    self.logger.info(f"使用缓存结果: {cache_key}")
+                    self.performance_monitor.record_analysis(
+                        execution_time=0.0,
+                        cache_hit=True,
+                        data_size=data_size,
+                        result_size=len(cached_result.frequency_items)
+                    )
+                    return cached_result
             
             # 执行核心分析（可能使用并行处理）
             if self.enable_parallel and data_size > 50:
@@ -1388,11 +1496,10 @@ class PairFrequencyAnalyzer:
                 self.cache.set(cache_key, result)
             
             # 记录性能数据
-            cache_hit = cached_result is not None
             result_size = len(result.frequency_items)
             self.performance_monitor.record_analysis(
                 execution_time=result.execution_time,
-                cache_hit=cache_hit,
+                cache_hit=False,
                 data_size=data_size,
                 result_size=result_size
             )
@@ -1409,7 +1516,6 @@ class PairFrequencyAnalyzer:
         except Exception as e:
             self.logger.error(f"分析过程中发生错误: {str(e)}")
             raise
-    
     def _validate_inputs(self, target_issue: str, period_count: int):
         """验证输入参数"""
         if not validate_issue_format(target_issue):
@@ -1437,10 +1543,59 @@ class PairFrequencyAnalyzer:
             except Exception as e:
                 raise ValueError(f"无法读取历史数据: {str(e)}")
     
-    def _get_cache_key(self, target_issue: str, period_count: int) -> str:
-        """生成缓存键"""
-        return f"{target_issue}_{period_count}"
-    
+    def _get_cache_key(
+        self,
+        target_issue: str,
+        period_count: int,
+        data: Optional[pd.DataFrame] = None
+    ) -> str:
+        """生成缓存键，包含数据内容指纹以规避历史数据变更后的陈旧缓存。"""
+        try:
+            if data is None:
+                data = self._get_historical_data()
+            start_issue, end_issue, _ = calculate_issue_range(target_issue, period_count, data)
+            data_signature = self._build_data_fingerprint(data, start_issue, end_issue)
+            return (
+                f"pair_frequency:{target_issue}:{period_count}:"
+                f"{start_issue}:{end_issue}:{data_signature}"
+            )
+        except Exception:
+            if data is None:
+                return f"pair_frequency:{target_issue}:{period_count}:unavailable"
+            data_signature = self._build_data_fingerprint(data)
+            return f"pair_frequency:{target_issue}:{period_count}:{data_signature}"
+
+    def _build_data_fingerprint(
+        self,
+        data: pd.DataFrame,
+        start_issue: Optional[str] = None,
+        end_issue: Optional[str] = None
+    ) -> str:
+        """计算参与统计数据的短哈希，避免相同参数复用旧数据结果。"""
+        if data is None or data.empty:
+            return "empty"
+
+        required_cols = ['issue'] + NUMBER_COLUMNS
+        available_cols = [col for col in required_cols if col in data.columns]
+        fingerprint_data = data[available_cols].copy()
+
+        if 'issue' in fingerprint_data.columns:
+            fingerprint_data['issue'] = fingerprint_data['issue'].astype(str)
+            if start_issue is not None and end_issue is not None:
+                mask = (
+                    (fingerprint_data['issue'] >= str(start_issue))
+                    & (fingerprint_data['issue'] <= str(end_issue))
+                )
+                fingerprint_data = fingerprint_data[mask]
+            fingerprint_data = fingerprint_data.sort_values('issue')
+
+        fingerprint_data = fingerprint_data.reset_index(drop=True)
+        payload = fingerprint_data.to_json(
+            orient='split',
+            date_format='iso',
+            force_ascii=True
+        )
+        return hashlib.sha256(payload.encode('utf-8')).hexdigest()[:16]
     def clear_cache(self):
         """清空缓存"""
         self.cache.clear()
@@ -1506,9 +1661,13 @@ class PairFrequencyAnalyzer:
                 target_issue, period_count, data
             )
             
-            # 筛选数据
-            mask = (data['issue'] >= start_issue) & (data['issue'] <= end_issue)
-            filtered_data = data[mask]
+            data_for_range = data.copy()
+            data_for_range['issue'] = data_for_range['issue'].astype(str)
+            mask = (
+                (data_for_range['issue'] >= str(start_issue))
+                & (data_for_range['issue'] <= str(end_issue))
+            )
+            filtered_data = data_for_range[mask]
             
             if filtered_data.empty:
                 # 返回空结果
@@ -1518,10 +1677,12 @@ class PairFrequencyAnalyzer:
                     actual_periods=0,
                     start_issue=start_issue,
                     end_issue=end_issue,
-                    total_pairs=0,
-                    frequency_items=[],
+                    total_pairs=TOTAL_PAIR_TYPES,
+                    frequency_items=sort_pair_frequencies({}, 0),
                     analysis_time=start_time,
-                    execution_time=0.0
+                    execution_time=0.0,
+                    valid_periods=0,
+                    skipped_periods=0
                 )
             
             # 将数据分块进行并行处理
@@ -1543,12 +1704,17 @@ class PairFrequencyAnalyzer:
             
             # 合并结果
             combined_pair_counts = {}
+            valid_periods = 0
+            skipped_periods = 0
             for chunk_result in chunk_results:
-                for pair, count in chunk_result.items():
+                pair_counts, chunk_valid_periods, chunk_skipped_periods = chunk_result
+                valid_periods += chunk_valid_periods
+                skipped_periods += chunk_skipped_periods
+                for pair, count in pair_counts.items():
                     combined_pair_counts[pair] = combined_pair_counts.get(pair, 0) + count
             
             # 排序和格式化结果
-            frequency_items = sort_pair_frequencies(combined_pair_counts, actual_periods)
+            frequency_items = sort_pair_frequencies(combined_pair_counts, valid_periods)
             
             # 计算执行时间
             execution_time = (datetime.now() - start_time).total_seconds()
@@ -1557,13 +1723,15 @@ class PairFrequencyAnalyzer:
             result = PairFrequencyResult(
                 target_issue=target_issue,
                 requested_periods=period_count,
-                actual_periods=actual_periods,
+                actual_periods=valid_periods,
                 start_issue=start_issue,
                 end_issue=end_issue,
-                total_pairs=len(frequency_items),
+                total_pairs=TOTAL_PAIR_TYPES,
                 frequency_items=frequency_items,
                 analysis_time=start_time,
-                execution_time=execution_time
+                execution_time=execution_time,
+                valid_periods=valid_periods,
+                skipped_periods=skipped_periods
             )
             
             return result
@@ -1572,7 +1740,7 @@ class PairFrequencyAnalyzer:
             execution_time = (datetime.now() - start_time).total_seconds()
             raise ValueError(f"并行分析过程中发生错误: {str(e)}，执行时间: {execution_time:.3f}秒")
     
-    def _process_data_chunk(self, chunk: pd.DataFrame, start_issue: str, end_issue: str) -> Dict[Tuple[int, int], int]:
+    def _process_data_chunk(self, chunk: pd.DataFrame, start_issue: str, end_issue: str) -> Tuple[Dict[Tuple[int, int], int], int, int]:
         """
         处理单个数据块
         
@@ -1582,10 +1750,9 @@ class PairFrequencyAnalyzer:
             end_issue: 结束期号
             
         Returns:
-            数字对频率字典
+            数字对频率字典、有效期数、跳过无效行数
         """
-        return count_pair_frequencies(chunk, start_issue, end_issue)
-    
+        return count_pair_frequencies(chunk, start_issue, end_issue, return_metadata=True)
     def optimize_performance(self) -> Dict[str, Any]:
         """
         性能优化建议
