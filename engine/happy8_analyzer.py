@@ -28,8 +28,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Dict, Tuple, Optional, Any, Union
 from dataclasses import dataclass, asdict
-from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
-import multiprocessing as mp
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 import pandas as pd
@@ -4124,203 +4123,136 @@ class GraphNeuralNetworkPredictor:
 
 
 class MonteCarloPredictor:
-    """蒙特卡洛模拟预测器 - 基于随机采样的概率预测"""
+    """蒙特卡洛模拟预测器 - 显式的1-80无放回抽样模型"""
+
+    VALID_SAMPLING_MODELS = {
+        'official_uniform',
+        'dirichlet_smoothed_frequency',
+    }
 
     def __init__(self, analyzer):
         self.analyzer = analyzer
-        self.num_simulations = 50000  # 大规模随机采样
+        self.num_simulations = 50000
+        self.random_seed = 42
+        self.sampling_model = 'dirichlet_smoothed_frequency'
+        self.prior_strength = 1.0
 
     def predict(self, data: pd.DataFrame, count: int = 30, **kwargs) -> Tuple[List[int], List[float]]:
-        """蒙特卡洛模拟预测"""
+        """基于指定分布模拟每期20个号码的无放回抽样。"""
+        num_simulations = int(kwargs.get('num_simulations', self.num_simulations))
+        random_seed = int(kwargs.get('random_seed', self.random_seed))
+        sampling_model = kwargs.get('sampling_model', self.sampling_model)
+        prior_strength = float(kwargs.get('prior_strength', self.prior_strength))
+
         print(f"🔄 执行蒙特卡洛模拟预测...")
-        print(f"分析数据: {len(data)}期，模拟次数: {self.num_simulations}")
+        print(
+            f"分析数据: {len(data)}期，模拟次数: {num_simulations}，"
+            f"抽样模型: {sampling_model}，随机种子: {random_seed}"
+        )
 
-        # 分析历史数据的统计特征
-        historical_stats = self._analyze_historical_patterns(data)
+        weights = self._build_sampling_weights(data, sampling_model, prior_strength)
+        rng = np.random.default_rng(random_seed)
+        inclusion_probabilities = self._run_monte_carlo_simulation(
+            weights, num_simulations, rng
+        )
 
-        # 执行蒙特卡洛模拟
-        simulation_results = self._run_monte_carlo_simulation(historical_stats)
-
-        # 统计模拟结果
-        number_frequencies = self._analyze_simulation_results(simulation_results)
-
-        # 选择最优号码
         predicted_numbers, confidence_scores = self._select_optimal_numbers(
-            number_frequencies, count
+            inclusion_probabilities, count
         )
 
         print(f"✅ 蒙特卡洛模拟预测完成")
         print(f"预测号码: {predicted_numbers[:10]}...")
-        print(f"平均置信度: {np.mean(confidence_scores):.3f}")
+        print(f"平均入选概率: {np.mean(confidence_scores):.3f}")
 
         return predicted_numbers, confidence_scores
 
-    def _analyze_historical_patterns(self, data: pd.DataFrame):
-        """分析历史数据模式"""
-        patterns = {
-            'number_frequencies': np.zeros(80),
-            'sum_distribution': [],
-            'odd_even_ratios': [],
-            'zone_distributions': [],
-            'consecutive_patterns': []
-        }
+    def _build_sampling_weights(
+        self,
+        data: pd.DataFrame,
+        sampling_model: str,
+        prior_strength: float,
+    ) -> np.ndarray:
+        """构建每个号码被抽中的基础权重，抽样阶段始终不放回。"""
+        if sampling_model not in self.VALID_SAMPLING_MODELS:
+            supported = ', '.join(sorted(self.VALID_SAMPLING_MODELS))
+            raise ValueError(f"不支持的蒙特卡洛抽样模型: {sampling_model}，可选: {supported}")
+
+        if sampling_model == 'official_uniform':
+            return np.full(80, 1 / 80)
+
+        if prior_strength <= 0:
+            raise ValueError("prior_strength必须大于0")
+
+        counts = self._extract_number_counts(data)
+        posterior_alpha = counts + prior_strength
+        return posterior_alpha / np.sum(posterior_alpha)
+
+    def _extract_number_counts(self, data: pd.DataFrame) -> np.ndarray:
+        """统计历史号码出现次数，忽略缺失列和非法号码。"""
+        counts = np.zeros(80, dtype=float)
+
+        if data is None or data.empty:
+            return counts
 
         for _, row in data.iterrows():
-            numbers = [int(row[f'num{i}']) for i in range(1, 21)]
+            for i in range(1, 21):
+                column = f'num{i}'
+                if column not in row:
+                    continue
 
-            # 号码频率
-            for num in numbers:
-                patterns['number_frequencies'][num - 1] += 1
+                try:
+                    num = int(row[column])
+                except (TypeError, ValueError):
+                    continue
 
-            # 和值分布
-            patterns['sum_distribution'].append(sum(numbers))
+                if 1 <= num <= 80:
+                    counts[num - 1] += 1
 
-            # 奇偶比
-            odd_count = sum(1 for num in numbers if num % 2 == 1)
-            patterns['odd_even_ratios'].append(odd_count / 20)
+        return counts
 
-            # 区域分布
-            zone_counts = [0] * 8
-            for num in numbers:
-                zone_idx = (num - 1) // 10
-                zone_counts[zone_idx] += 1
-            patterns['zone_distributions'].append(zone_counts)
+    def _run_monte_carlo_simulation(
+        self,
+        weights: np.ndarray,
+        num_simulations: int,
+        rng: np.random.Generator,
+    ) -> np.ndarray:
+        """模拟官方快乐8每期从1-80中无放回抽取20个号码。"""
+        if num_simulations <= 0:
+            raise ValueError("num_simulations必须大于0")
 
-            # 连续号码模式
-            consecutive_count = self._count_consecutive_numbers(numbers)
-            patterns['consecutive_patterns'].append(consecutive_count)
+        print("开始蒙特卡洛无放回抽样...")
 
-        # 归一化频率
-        patterns['number_frequencies'] = patterns['number_frequencies'] / len(data)
+        inclusion_counts = np.zeros(80, dtype=float)
+        population = np.arange(80)
 
-        return patterns
+        for _ in range(num_simulations):
+            sampled_indices = rng.choice(
+                population,
+                size=20,
+                replace=False,
+                p=weights,
+            )
+            inclusion_counts[sampled_indices] += 1
 
-    def _count_consecutive_numbers(self, numbers):
-        """统计连续号码数量"""
-        sorted_numbers = sorted(numbers)
-        consecutive_count = 0
+        print(f"模拟完成，生成 {num_simulations} 个样本")
+        return inclusion_counts / num_simulations
 
-        for i in range(len(sorted_numbers) - 1):
-            if sorted_numbers[i + 1] - sorted_numbers[i] == 1:
-                consecutive_count += 1
+    def _select_optimal_numbers(self, inclusion_probabilities, count):
+        """按模拟得到的入选概率选择号码，概率相同时按号码升序稳定排序。"""
+        target_count = min(max(int(count), 0), 80)
+        if target_count == 0:
+            return [], []
 
-        return consecutive_count
+        number_probs = [
+            (i + 1, float(prob))
+            for i, prob in enumerate(inclusion_probabilities)
+        ]
+        number_probs.sort(key=lambda x: (-x[1], x[0]))
 
-    def _run_monte_carlo_simulation(self, historical_stats):
-        """执行蒙特卡洛模拟"""
-        print("开始蒙特卡洛模拟...")
-
-        simulation_results = []
-
-        # 使用多进程加速模拟
-        import multiprocessing as mp
-        from functools import partial
-
-        # 分批处理
-        batch_size = self.num_simulations // mp.cpu_count()
-
-        with mp.Pool() as pool:
-            simulate_batch = partial(self._simulate_batch, historical_stats)
-            batch_results = pool.map(simulate_batch, [batch_size] * mp.cpu_count())
-
-        # 合并结果
-        for batch_result in batch_results:
-            simulation_results.extend(batch_result)
-
-        print(f"模拟完成，生成 {len(simulation_results)} 个样本")
-
-        return simulation_results
-
-    def _simulate_batch(self, historical_stats, batch_size):
-        """模拟一批样本"""
-        batch_results = []
-
-        for _ in range(batch_size):
-            # 基于历史统计生成一组号码
-            simulated_numbers = self._generate_constrained_numbers(historical_stats)
-            batch_results.append(simulated_numbers)
-
-        return batch_results
-
-    def _analyze_simulation_results(self, simulation_results):
-        """分析模拟结果"""
-        number_frequencies = np.zeros(80)
-
-        for numbers in simulation_results:
-            for num in numbers:
-                number_frequencies[num - 1] += 1
-
-        # 归一化频率
-        number_frequencies = number_frequencies / len(simulation_results)
-
-        return number_frequencies
-
-    def _select_optimal_numbers(self, number_frequencies, count):
-        """选择最优号码"""
-        # 按频率排序
-        number_probs = [(i + 1, freq) for i, freq in enumerate(number_frequencies)]
-        number_probs.sort(key=lambda x: x[1], reverse=True)
-
-        predicted_numbers = [num for num, _ in number_probs[:count]]
-        confidence_scores = [float(freq) for _, freq in number_probs[:count]]
-
-        # 归一化置信度
-        if confidence_scores:
-            max_conf = max(confidence_scores)
-            if max_conf > 0:
-                confidence_scores = [conf / max_conf for conf in confidence_scores]
+        predicted_numbers = [num for num, _ in number_probs[:target_count]]
+        confidence_scores = [prob for _, prob in number_probs[:target_count]]
 
         return predicted_numbers, confidence_scores
-
-    def _generate_constrained_numbers(self, historical_stats):
-        """基于约束条件生成号码"""
-        max_attempts = 1000
-
-        for _ in range(max_attempts):
-            # 基于频率权重随机选择号码
-            weights = historical_stats['number_frequencies']
-            weights = weights + 0.01  # 避免零权重
-            weights = weights / np.sum(weights)
-
-            # 随机选择20个不重复号码
-            numbers = np.random.choice(
-                range(1, 81), size=20, replace=False, p=weights
-            ).tolist()
-
-            # 验证约束条件
-            if self._validate_constraints(numbers, historical_stats):
-                return sorted(numbers)
-
-        # 如果无法满足约束，返回基于频率的随机选择
-        return sorted(np.random.choice(range(1, 81), size=20, replace=False).tolist())
-
-    def _validate_constraints(self, numbers, historical_stats):
-        """验证号码组合是否满足历史模式约束"""
-        # 和值约束
-        sum_value = sum(numbers)
-        sum_mean = np.mean(historical_stats['sum_distribution'])
-        sum_std = np.std(historical_stats['sum_distribution'])
-        if abs(sum_value - sum_mean) > 2 * sum_std:
-            return False
-
-        # 奇偶比约束
-        odd_count = sum(1 for num in numbers if num % 2 == 1)
-        odd_ratio = odd_count / 20
-        odd_mean = np.mean(historical_stats['odd_even_ratios'])
-        if abs(odd_ratio - odd_mean) > 0.3:
-            return False
-
-        # 区域分布约束
-        zone_counts = [0] * 8
-        for num in numbers:
-            zone_idx = (num - 1) // 10
-            zone_counts[zone_idx] += 1
-
-        # 检查是否有区域完全为空（不太现实）
-        if zone_counts.count(0) > 3:
-            return False
-
-        return True
 
 
 class ClusteringPredictor:
@@ -4787,140 +4719,80 @@ class AdvancedEnsemblePredictor:
 
 
 class BayesianPredictor:
-    """贝叶斯推理预测器 - 动态贝叶斯网络和MCMC采样"""
+    """贝叶斯推理预测器 - Dirichlet后验均值评分"""
 
     def __init__(self, analyzer):
         self.analyzer = analyzer
-        self.num_samples = 1000  # MCMC采样次数
+        self.prior_strength = 1.0
 
     def predict(self, data: pd.DataFrame, count: int = 30, **kwargs) -> Tuple[List[int], List[float]]:
-        """贝叶斯推理预测"""
-        print(f"🔄 执行贝叶斯推理预测...")
-        print(f"分析数据: {len(data)}期，MCMC采样: {self.num_samples}次")
+        """使用Dirichlet-多项分布共轭模型计算号码后验评分。"""
+        prior_strength = float(kwargs.get('prior_strength', self.prior_strength))
 
-        # 构建先验分布
-        prior_distribution = self._build_prior_distribution(data)
+        print(f"🔄 执行贝叶斯Dirichlet后验评分预测...")
+        print(f"分析数据: {len(data)}期，Dirichlet先验强度: {prior_strength}")
 
-        # MCMC采样
-        posterior_samples = self._mcmc_sampling(data, prior_distribution)
+        posterior_alpha = self._build_dirichlet_posterior(data, prior_strength)
+        posterior_mean = self._calculate_posterior_mean(posterior_alpha)
 
-        # 后验概率计算
-        posterior_probabilities = self._calculate_posterior_probabilities(posterior_samples)
-
-        # 选择最优号码
         predicted_numbers, confidence_scores = self._bayesian_selection(
-            posterior_probabilities, count
+            posterior_mean, count
         )
 
-        print(f"✅ 贝叶斯推理预测完成")
+        print(f"✅ 贝叶斯后验评分预测完成")
         print(f"预测号码: {predicted_numbers[:10]}...")
-        print(f"平均置信度: {np.mean(confidence_scores):.3f}")
+        print(f"平均后验入选评分: {np.mean(confidence_scores):.3f}")
 
         return predicted_numbers, confidence_scores
 
-    def _build_prior_distribution(self, data: pd.DataFrame):
-        """构建先验分布"""
-        # 使用Dirichlet分布作为先验
-        alpha = np.ones(80) + 0.1  # 平滑参数
+    def _build_dirichlet_posterior(self, data: pd.DataFrame, prior_strength: float) -> np.ndarray:
+        """用历史出现次数更新对称Dirichlet先验。"""
+        if prior_strength <= 0:
+            raise ValueError("prior_strength必须大于0")
 
-        # 基于历史数据更新先验
+        posterior_alpha = np.full(80, prior_strength, dtype=float)
+
+        if data is None or data.empty:
+            return posterior_alpha
+
         for _, row in data.iterrows():
-            numbers = [int(row[f'num{i}']) for i in range(1, 21)]
-            for num in numbers:
-                alpha[num - 1] += 1
+            for i in range(1, 21):
+                column = f'num{i}'
+                if column not in row:
+                    continue
 
-        return alpha
+                try:
+                    num = int(row[column])
+                except (TypeError, ValueError):
+                    continue
 
-    def _mcmc_sampling(self, data: pd.DataFrame, prior_alpha):
-        """MCMC采样 - Gibbs采样"""
-        print("开始MCMC采样...")
+                if 1 <= num <= 80:
+                    posterior_alpha[num - 1] += 1
 
-        samples = []
+        return posterior_alpha
 
-        # 初始化参数
-        current_theta = np.random.dirichlet(prior_alpha)
+    def _calculate_posterior_mean(self, posterior_alpha: np.ndarray) -> np.ndarray:
+        """计算Dirichlet后验均值，表示一次号码出现事件落在各号码上的概率。"""
+        alpha_sum = np.sum(posterior_alpha)
+        if alpha_sum <= 0:
+            return np.full(80, 1 / 80)
 
-        for i in range(self.num_samples):
-            # Gibbs采样步骤
+        return posterior_alpha / alpha_sum
 
-            # 1. 基于当前参数采样号码组合
-            sampled_numbers = self._sample_numbers_from_theta(current_theta)
+    def _bayesian_selection(self, posterior_mean, count):
+        """按后验均值排序，并转换为单期20个号码的入选评分。"""
+        target_count = min(max(int(count), 0), 80)
+        if target_count == 0:
+            return [], []
 
-            # 2. 基于采样结果更新参数
-            updated_alpha = prior_alpha.copy()
-            for num in sampled_numbers:
-                updated_alpha[num - 1] += 1
+        number_probs = [
+            (i + 1, float(min(prob * 20, 1.0)))
+            for i, prob in enumerate(posterior_mean)
+        ]
+        number_probs.sort(key=lambda x: (-x[1], x[0]))
 
-            # 3. 从后验分布采样新参数
-            current_theta = np.random.dirichlet(updated_alpha)
-
-            # 4. 记录样本
-            samples.append({
-                'theta': current_theta.copy(),
-                'numbers': sampled_numbers
-            })
-
-            if (i + 1) % 200 == 0:
-                print(f"MCMC采样进度: {i + 1}/{self.num_samples}")
-
-        print("MCMC采样完成")
-        return samples
-
-    def _sample_numbers_from_theta(self, theta):
-        """基于参数theta采样号码组合"""
-        # 确保theta是有效的概率分布
-        theta = theta / np.sum(theta)
-
-        # 采样20个不重复号码
-        sampled_numbers = []
-        remaining_theta = theta.copy()
-
-        for _ in range(20):
-            # 归一化剩余概率
-            if np.sum(remaining_theta) > 0:
-                prob = remaining_theta / np.sum(remaining_theta)
-
-                # 采样一个号码
-                sampled_idx = np.random.choice(80, p=prob)
-                sampled_numbers.append(sampled_idx + 1)
-
-                # 移除已采样的号码
-                remaining_theta[sampled_idx] = 0
-            else:
-                # 如果概率用完，随机选择剩余号码
-                remaining_numbers = [i + 1 for i in range(80) if (i + 1) not in sampled_numbers]
-                if remaining_numbers:
-                    sampled_numbers.append(np.random.choice(remaining_numbers))
-
-        return sorted(sampled_numbers)
-
-    def _calculate_posterior_probabilities(self, samples):
-        """计算后验概率"""
-        # 统计每个号码在样本中的出现频率
-        number_counts = np.zeros(80)
-
-        for sample in samples:
-            for num in sample['numbers']:
-                number_counts[num - 1] += 1
-
-        # 计算后验概率
-        posterior_probs = number_counts / len(samples)
-
-        return posterior_probs
-
-    def _bayesian_selection(self, posterior_probs, count):
-        """贝叶斯选择最优号码"""
-        # 按后验概率排序
-        number_probs = [(i + 1, prob) for i, prob in enumerate(posterior_probs)]
-        number_probs.sort(key=lambda x: x[1], reverse=True)
-
-        predicted_numbers = [num for num, _ in number_probs[:count]]
-        confidence_scores = [float(prob) for _, prob in number_probs[:count]]
-
-        # 归一化置信度
-        if confidence_scores:
-            max_conf = max(confidence_scores) if max(confidence_scores) > 0 else 1
-            confidence_scores = [conf / max_conf for conf in confidence_scores]
+        predicted_numbers = [num for num, _ in number_probs[:target_count]]
+        confidence_scores = [score for _, score in number_probs[:target_count]]
 
         return predicted_numbers, confidence_scores
 
