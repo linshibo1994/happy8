@@ -30,6 +30,15 @@ except ImportError as e:
     ORIGINAL_HAPPY8_AVAILABLE = False
 
 
+def _is_valid_happy8_numbers(numbers: List[int]) -> bool:
+    """验证一期开奖结果是否符合快乐8规则。"""
+    return (
+        len(numbers) == 20
+        and len(set(numbers)) == 20
+        and all(1 <= num <= 80 for num in numbers)
+    )
+
+
 class Happy8AlgorithmAdapter:
     """Happy8原始算法适配器 - 完整集成17种算法"""
 
@@ -74,14 +83,17 @@ class Happy8AlgorithmAdapter:
                 'date': item['date']
             }
 
-            # 将numbers列表转换为num1, num2, ..., num20列
-            numbers = item['numbers']
-            for i, num in enumerate(numbers[:20], 1):
-                row[f'num{i}'] = num
+            # 将numbers列表转换为num1, num2, ..., num20列；整期非法数据直接跳过。
+            try:
+                numbers = [int(num) for num in item['numbers']]
+            except (TypeError, ValueError):
+                continue
 
-            # 如果号码不足20个，用0填充（通常不会发生）
-            for i in range(len(numbers) + 1, 21):
-                row[f'num{i}'] = 0
+            if not _is_valid_happy8_numbers(numbers):
+                continue
+
+            for i, num in enumerate(numbers, 1):
+                row[f'num{i}'] = num
 
             # 添加其他字段
             if 'sum_value' in item:
@@ -101,6 +113,9 @@ class Happy8AlgorithmAdapter:
 
             data_list.append(row)
 
+        if not data_list:
+            return pd.DataFrame()
+
         df = pd.DataFrame(data_list)
         # 确保按期号排序（最新的在前面，符合原始系统的期望）
         df = df.sort_values('issue', ascending=False).reset_index(drop=True)
@@ -118,10 +133,11 @@ class Happy8AlgorithmAdapter:
         if confidence_scores:
             overall_confidence = float(np.mean(confidence_scores))
         else:
-            overall_confidence = 0.5
+            overall_confidence = 0.0
 
         # 确保质量分在合理展示范围内
-        overall_confidence = max(0.1, min(0.99, overall_confidence))
+        if confidence_scores:
+            overall_confidence = max(0.1, min(0.99, overall_confidence))
 
         return {
             "predicted_numbers": predicted_numbers,
@@ -130,6 +146,8 @@ class Happy8AlgorithmAdapter:
                 "algorithm": algorithm,
                 "engine": "original_happy8",
                 "score_semantics": "ranking_quality_score_not_hit_probability",
+                "fallback_used": False,
+                "no_prediction_reason": "empty_prediction" if not predicted_numbers else None,
                 "predictor_scores": dict(zip(predicted_numbers, confidence_scores)) if confidence_scores else {},
                 "total_candidates": len(predicted_numbers),
                 "confidence_distribution": {
@@ -172,6 +190,14 @@ class Happy8AlgorithmAdapter:
 
             # 转换结果格式
             result = self.convert_original_result(predicted_numbers, confidence_scores, algorithm)
+            fallback_algorithm = getattr(predictor, 'last_fallback_algorithm', None)
+            fallback_reason = getattr(predictor, 'last_fallback_reason', None)
+            if fallback_algorithm:
+                result["analysis_data"].update({
+                    "fallback_used": True,
+                    "fallback_algorithm": fallback_algorithm,
+                    "fallback_reason": fallback_reason,
+                })
 
             return result
 

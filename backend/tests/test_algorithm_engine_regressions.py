@@ -147,6 +147,41 @@ def test_clustering_uses_latest_scaled_feature_for_prediction():
     assert len(set(numbers)) == 10
 
 
+def test_clustering_handles_none_and_count_boundaries():
+    """聚类预测应兼容None输入和count边界。"""
+    predictor = ClusteringPredictor(None)
+    data = make_dataframe(
+        [(f"2026{i:03d}", list(range(1, 21))) for i in range(1, 13)]
+    )
+
+    assert predictor.predict(None, 5) == ([], [])
+    assert predictor._generate_cluster_prediction([0], data, -1) == ([], [])
+
+    numbers, scores = predictor._generate_cluster_prediction([0], data, 81)
+    assert len(numbers) == 80
+    assert len(scores) == 80
+    assert len(set(numbers)) == 80
+    assert all(1 <= num <= 80 for num in numbers)
+
+
+def test_clustering_skips_invalid_draw_rows():
+    """聚类特征和簇内频次不能被非法开奖记录污染。"""
+    predictor = ClusteringPredictor(None)
+    valid = make_draw("2026002", list(range(1, 21)))
+    invalid = make_draw("2026001", [0, *range(2, 21)])
+    duplicate = make_draw("2026000", [1, *range(1, 20)])
+    data = pd.DataFrame([valid, invalid, duplicate])
+
+    filtered = predictor._extract_clustering_features(
+        pd.DataFrame([valid])
+    )
+    assert filtered.shape[0] == 1
+
+    numbers, scores = predictor._generate_cluster_prediction([0, 1, 2], data, 5)
+    assert numbers == [1, 2, 3, 4, 5]
+    assert scores == [1.0] * 5
+
+
 def test_bayesian_posterior_prefers_observed_numbers():
     """Dirichlet后验评分应反映历史观测次数。"""
     data = make_dataframe(

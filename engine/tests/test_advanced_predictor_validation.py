@@ -17,6 +17,8 @@ from happy8_analyzer import (  # noqa: E402
     AdvancedEnsemblePredictor,
     GraphNeuralNetworkPredictor,
     LSTMPredictor,
+    SuperPredictor,
+    HighConfidencePredictor,
     TransformerPredictor,
     calculate_multilabel_jaccard_score,
     split_time_series_tail_validation,
@@ -124,3 +126,115 @@ def test_advanced_ensemble_prediction_features_use_latest_window():
     assert prediction_features.shape == (1, 15)
     assert not np.array_equal(prediction_features, X[-1:].reshape(1, -1))
     assert prediction_features[0, -3] == pytest.approx(sum(range(61, 81)) / 20)
+
+
+def test_advanced_ensemble_handles_none_and_invalid_draw_rows():
+    """高级集成应兼容None输入，并跳过无效开奖记录。"""
+    predictor = AdvancedEnsemblePredictor(None)
+    valid_data = make_history(periods=12)
+    invalid_data = valid_data.copy()
+    invalid_data.loc[0, "num1"] = 0
+    invalid_data.loc[1, "num2"] = 81
+    invalid_data.loc[2, "num3"] = invalid_data.loc[2, "num4"]
+
+    assert predictor.predict(None, count=5) == ([], [])
+
+    X_valid, y_valid = predictor._prepare_ensemble_data(valid_data)
+    X_invalid, y_invalid = predictor._prepare_ensemble_data(invalid_data)
+
+    assert X_invalid.shape[0] < X_valid.shape[0]
+    assert y_invalid.shape[1] == 80
+    assert np.all((y_invalid == 0) | (y_invalid == 1))
+
+
+def test_lstm_fallback_metadata_when_tensorflow_unavailable(monkeypatch):
+    """LSTM降级到频率分析时应记录实际执行算法。"""
+    import happy8_analyzer
+
+    predictor = LSTMPredictor(None)
+    data = make_history(periods=6)
+    monkeypatch.setattr(happy8_analyzer, "TF_AVAILABLE", False)
+
+    numbers, scores = predictor.predict(data, count=5)
+
+    assert len(numbers) == 5
+    assert len(scores) == 5
+    assert predictor.last_fallback_algorithm == "frequency"
+    assert predictor.last_fallback_reason == "tensorflow_unavailable"
+
+
+def test_super_predictor_empty_data_and_duplicate_fallback_sources(monkeypatch):
+    """综合融合器不能在空数据伪造候选，也不能重复融合同一降级信号。"""
+    predictor = SuperPredictor(None)
+    data = make_history(periods=6)
+
+    assert predictor.predict(pd.DataFrame(), count=5) == ([], [])
+
+    class FixedPredictor:
+        def __init__(self, fallback_algorithm=None):
+            self.last_fallback_algorithm = fallback_algorithm
+
+        def predict(self, _data, count):
+            return [1, 2, 3], [1.0, 0.5, 0.25]
+
+    predictor.predictors = {
+        "frequency": FixedPredictor(),
+        "transformer": FixedPredictor("frequency"),
+        "bayesian": FixedPredictor(),
+    }
+    predictor.predictor_groups = {
+        "frequency": "statistical",
+        "transformer": "deep_sequence",
+        "bayesian": "bayesian",
+    }
+
+    numbers, scores = predictor.predict(data, count=3)
+
+    assert numbers == [1, 2, 3]
+    assert scores == [1.0, 0.5, 0.25]
+
+
+def test_super_predictor_returns_empty_when_all_fused_candidates_invalid():
+    """综合融合器在所有候选被过滤后应返回空结果。"""
+    predictor = SuperPredictor(None)
+    data = make_history(periods=6)
+
+    class InvalidPredictor:
+        last_fallback_algorithm = None
+
+        def predict(self, _data, _count):
+            return [0, 81, "bad", 1], [1.0, 1.0, 1.0, float("nan")]
+
+    predictor.predictors = {"invalid": InvalidPredictor()}
+    predictor.predictor_groups = {"invalid": "statistical"}
+
+    assert predictor.predict(data, count=5) == ([], [])
+
+
+def test_high_confidence_hard_rejects_invalid_or_empty_outputs():
+    """质量门控应硬拒绝空、重复、越界和非数字候选。"""
+    predictor = HighConfidencePredictor(None)
+    data = make_history(periods=30)
+
+    assert predictor.predict(None, count=5) == ([], [])
+    assert predictor._validate_model_output([]) == 0.0
+    assert predictor._validate_model_output([1, 1, 2, 3, 4]) == 0.0
+    assert predictor._validate_model_output([81, 2, 3, 4, 5]) == 0.0
+    assert predictor._validate_model_output(["bad", 2, 3, 4, 5]) == 0.0
+    assert predictor._calculate_prediction_stability(data, [81, 2, 3, 4, 5]) == 0.0
+    assert predictor._validate_statistical_consistency(data, [1, 1, 2, 3, 4]) == 0.0
+
+
+def test_high_confidence_skips_invalid_history_rows():
+    """质量评分内部统计只应使用有效历史行。"""
+    predictor = HighConfidencePredictor(None)
+    data = make_history(periods=12)
+    invalid = data.copy()
+    invalid.loc[0, "num1"] = 0
+    invalid.loc[1, "num2"] = 81
+    invalid.loc[2, "num3"] = invalid.loc[2, "num4"]
+
+    assert predictor._calculate_pattern_strength(invalid) >= 0
+    dimensions = predictor._evaluate_confidence_dimensions(invalid, list(range(1, 6)), [1.0] * 5)
+    assert 0 <= dimensions["data_quality"] <= 1
+    assert 0 <= dimensions["statistical_significance"] <= 1

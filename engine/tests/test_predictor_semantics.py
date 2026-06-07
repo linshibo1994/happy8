@@ -97,9 +97,58 @@ def test_bayesian_uses_dirichlet_posterior_mean_scores():
 
 
 @pytest.mark.parametrize("predictor_cls", [MonteCarloPredictor, BayesianPredictor])
-def test_predictors_reject_invalid_prior_strength(predictor_cls):
+@pytest.mark.parametrize("prior_strength", [0, -1, np.nan, np.inf, -np.inf])
+def test_predictors_reject_invalid_prior_strength(predictor_cls, prior_strength):
     """Dirichlet平滑参数必须为正数。"""
     predictor = predictor_cls(analyzer=None)
 
     with pytest.raises(ValueError):
-        predictor.predict(make_history(), prior_strength=0)
+        predictor.predict(make_history(), prior_strength=prior_strength)
+
+
+def test_bayesian_empty_data_uses_finite_symmetric_prior():
+    """空数据下Bayesian只能返回有限的对称先验排序分。"""
+    predictor = BayesianPredictor(analyzer=None)
+
+    numbers, scores = predictor.predict(pd.DataFrame(), count=5, prior_strength=1.0)
+
+    assert numbers == [1, 2, 3, 4, 5]
+    assert scores == [0.25] * 5
+
+
+def test_bayesian_none_data_uses_finite_symmetric_prior():
+    """None数据下Bayesian也应使用有限对称先验。"""
+    predictor = BayesianPredictor(analyzer=None)
+
+    numbers, scores = predictor.predict(None, count=5, prior_strength=1.0)
+
+    assert numbers == [1, 2, 3, 4, 5]
+    assert scores == [0.25] * 5
+
+
+def test_monte_carlo_none_data_is_reproducible():
+    """None数据下蒙特卡洛应使用对称先验并保持可复现。"""
+    predictor = MonteCarloPredictor(analyzer=None)
+
+    first = predictor.predict(None, count=5, num_simulations=100, random_seed=11)
+    second = predictor.predict(None, count=5, num_simulations=100, random_seed=11)
+
+    assert first == second
+    assert_valid_prediction(first[0], first[1], 5)
+
+
+def test_bayesian_ignores_invalid_history_numbers():
+    """非法历史号码不能污染Dirichlet后验计数。"""
+    predictor = BayesianPredictor(analyzer=None)
+    data = make_history(periods=1)
+    data["num3"] = data["num3"].astype(object)
+    data.loc[0, "num1"] = 0
+    data.loc[0, "num2"] = 81
+    data.loc[0, "num3"] = "bad"
+
+    posterior_alpha = predictor._build_dirichlet_posterior(data, prior_strength=1.0)
+
+    assert posterior_alpha[0] == 1.0
+    assert posterior_alpha[1] == 1.0
+    assert posterior_alpha[2] == 1.0
+    assert posterior_alpha[3] == 2.0

@@ -734,6 +734,63 @@ def validate_numbers_for_draw(numbers: List[int]) -> bool:
     )
 
 
+def safe_period_count(data: Optional[pd.DataFrame]) -> int:
+    """安全获取历史期数，兼容None输入。"""
+    return 0 if data is None else len(data)
+
+
+def filter_valid_draws(data: Optional[pd.DataFrame]) -> pd.DataFrame:
+    """过滤不符合快乐8规则的历史行，保持原有顺序。"""
+    if data is None or data.empty:
+        return pd.DataFrame() if data is None else data.copy()
+
+    valid_rows = []
+    for _, row in data.iterrows():
+        try:
+            numbers = extract_row_numbers(row)
+        except Exception:
+            continue
+        if validate_numbers_for_draw(numbers):
+            valid_rows.append(row)
+
+    if not valid_rows:
+        return data.iloc[0:0].copy().reset_index(drop=True)
+
+    return pd.DataFrame(valid_rows).reset_index(drop=True)
+
+
+def normalize_candidate_numbers(numbers: Optional[List[Any]]) -> Optional[List[int]]:
+    """把候选号码归一为整数列表，非法输入返回None。"""
+    if not numbers:
+        return None
+
+    try:
+        normalized = [int(num) for num in numbers]
+    except (TypeError, ValueError):
+        return None
+
+    if any(num not in NUMBER_RANGE for num in normalized):
+        return None
+    if len(set(normalized)) != len(normalized):
+        return None
+
+    return normalized
+
+
+def reset_prediction_metadata(predictor: Any) -> None:
+    """清空本次预测的降级元数据。"""
+    predictor.last_fallback_algorithm = None
+    predictor.last_fallback_reason = None
+
+
+def run_frequency_fallback(predictor: Any, data: pd.DataFrame, count: int, reason: str) -> Tuple[List[int], List[float]]:
+    """执行频率分析降级，并记录实际生效算法。"""
+    predictor.last_fallback_algorithm = 'frequency'
+    predictor.last_fallback_reason = reason
+    frequency_predictor = FrequencyPredictor(getattr(predictor, 'analyzer', None))
+    return frequency_predictor.predict(data, count)
+
+
 def generate_all_number_pairs() -> List[Tuple[int, int]]:
     """生成快乐8 1-80范围内全部3160个无序数字对。"""
     return ALL_NUMBER_PAIRS.copy()
@@ -786,19 +843,31 @@ def rank_number_scores(number_scores: Dict[int, float], count: int) -> Tuple[Lis
     if safe_count == 0:
         return [], []
 
-    valid_scores = {
-        int(num): float(score)
-        for num, score in number_scores.items()
-        if int(num) in NUMBER_RANGE and np.isfinite(score)
-    }
+    valid_scores = {}
+    for num, score in number_scores.items():
+        try:
+            safe_num = int(num)
+            safe_score = float(score)
+        except (OverflowError, TypeError, ValueError):
+            continue
+        if safe_num in NUMBER_RANGE and np.isfinite(safe_score):
+            valid_scores[safe_num] = safe_score
     if not valid_scores:
-        raise ValueError("没有可排序的候选号码")
+        return [], []
 
     sorted_items = sorted(valid_scores.items(), key=lambda item: (-item[1], item[0]))
     selected = sorted_items[:min(safe_count, len(sorted_items))]
     numbers = [num for num, _ in selected]
     scores = normalize_scores([score for _, score in selected])
     return numbers, scores
+
+
+def safe_rank_number_scores(number_scores: Dict[int, float], count: int) -> Tuple[List[int], List[float]]:
+    """安全排序候选；全部非法时返回空结果。"""
+    try:
+        return rank_number_scores(number_scores, count)
+    except ValueError:
+        return [], []
 
 
 def calculate_multilabel_jaccard_score(
@@ -3360,8 +3429,9 @@ def calculate_markov_state_scores(data: pd.DataFrame, order: int = 1, alpha: flo
         raise ValueError("马尔可夫阶数必须大于0")
 
     draw_sets = _draw_sets_oldest_first(data)
-    if len(draw_sets) <= order:
-        # 数据不足时退回到单号理论基线加历史频率，保持确定性。
+    effective_order = min(order, len(draw_sets) - 1)
+    if effective_order < 1:
+        # 连一阶转移都无法形成时，退回到单号理论基线加历史频率，保持确定性。
         frequency = FrequencyPredictor(None)._calculate_frequency(ensure_newest_first(data))
         return {
             num: 0.5 * THEORETICAL_SINGLE_PROBABILITY + 0.5 * frequency.get(num, 0.0)
@@ -3402,7 +3472,7 @@ def calculate_markov_state_scores(data: pd.DataFrame, order: int = 1, alpha: flo
         return float((hits + alpha * fallback_score) / (hits + misses + alpha))
 
     for num in NUMBER_RANGE:
-        scores[num] = transition_score_for_number(num, order)
+        scores[num] = transition_score_for_number(num, effective_order)
 
     return scores
 
@@ -3576,17 +3646,19 @@ class LSTMPredictor:
         self.scaler = StandardScaler()
         self.sequence_length = 10
         self.validation_jaccard_score = 0.0
+        self.last_fallback_algorithm = None
+        self.last_fallback_reason = None
 
     def predict(self, data: pd.DataFrame, count: int = 30, **kwargs) -> Tuple[List[int], List[float]]:
         """LSTM预测"""
+        reset_prediction_metadata(self)
         print("🔄 执行LSTM神经网络预测...")
-        print(f"分析数据: {len(data)}期")
+        print(f"分析数据: {safe_period_count(data)}期")
 
         try:
             if not TF_AVAILABLE:
                 print("⚠️ TensorFlow未安装，使用频率分析作为后备")
-                frequency_predictor = FrequencyPredictor(self.analyzer)
-                return frequency_predictor.predict(data, count)
+                return run_frequency_fallback(self, data, count, 'tensorflow_unavailable')
 
             # 准备训练数据
             X, y = self._prepare_training_data(
@@ -3596,8 +3668,7 @@ class LSTMPredictor:
 
             if X.size == 0:
                 print("⚠️ 训练数据不足，使用频率分析作为后备")
-                frequency_predictor = FrequencyPredictor(self.analyzer)
-                return frequency_predictor.predict(data, count)
+                return run_frequency_fallback(self, data, count, 'insufficient_training_data')
 
             # 构建和训练模型
             self.model = self._build_model(X.shape)
@@ -3621,8 +3692,7 @@ class LSTMPredictor:
 
         except Exception as e:
             print(f"⚠️ LSTM预测失败: {e}")
-            frequency_predictor = FrequencyPredictor(self.analyzer)
-            return frequency_predictor.predict(data, count)
+            return run_frequency_fallback(self, data, count, 'prediction_error')
 
     def _prepare_training_data(self, data: pd.DataFrame, sequence_length: int = 10):
         """准备训练数据"""
@@ -3715,7 +3785,7 @@ class LSTMPredictor:
             tf.keras.layers.Dropout(0.2),
             tf.keras.layers.Dense(64, activation='relu'),
             tf.keras.layers.Dropout(0.3),
-            tf.keras.layers.Dense(80, activation='sigmoid')  # 80个号码的概率
+            tf.keras.layers.Dense(80, activation='sigmoid')  # 80个号码的排序分
         ])
 
         model.compile(
@@ -3767,15 +3837,19 @@ class LSTMPredictor:
         if len(X) == 0:
             raise ValueError("缺少LSTM预测窗口")
 
-        # 预测排序分
-        probabilities = self.model.predict(X, verbose=0)[0]
+        target_count = min(max(int(count), 0), 80)
+        if target_count == 0:
+            return [], []
 
-        # 选择概率最高的号码
-        number_probs = [(i + 1, prob) for i, prob in enumerate(probabilities)]
+        # 预测排序分；这些sigmoid输出只用于排序，不代表下一期命中概率。
+        ranking_scores = self.model.predict(X, verbose=0)[0]
+
+        # 选择排序分最高的号码
+        number_probs = [(i + 1, score) for i, score in enumerate(ranking_scores)]
         number_probs.sort(key=lambda x: (-x[1], x[0]))
 
-        predicted_numbers = [num for num, _ in number_probs[:count]]
-        confidence_scores = [prob for _, prob in number_probs[:count]]
+        predicted_numbers = [num for num, _ in number_probs[:target_count]]
+        confidence_scores = [prob for _, prob in number_probs[:target_count]]
 
         return predicted_numbers, confidence_scores
 
@@ -3794,11 +3868,14 @@ class TransformerPredictor:
         self.max_seq_length = 20
         self.sequence_length = 10
         self.validation_jaccard_score = 0.0
+        self.last_fallback_algorithm = None
+        self.last_fallback_reason = None
 
     def predict(self, data: pd.DataFrame, count: int = 30, **kwargs) -> Tuple[List[int], List[float]]:
         """Transformer预测"""
+        reset_prediction_metadata(self)
         print(f"🔄 执行Transformer模型预测...")
-        print(f"分析数据: {len(data)}期")
+        print(f"分析数据: {safe_period_count(data)}期")
 
         try:
             import torch
@@ -3809,8 +3886,7 @@ class TransformerPredictor:
             # 检查是否有足够的数据
             if len(data) < self.sequence_length + 2:
                 print("⚠️ 数据不足，使用频率分析作为后备")
-                frequency_predictor = FrequencyPredictor(self.analyzer)
-                return frequency_predictor.predict(data, count)
+                return run_frequency_fallback(self, data, count, 'insufficient_history')
 
             # 准备训练数据
             sequences, targets = self._prepare_sequences(
@@ -3820,8 +3896,7 @@ class TransformerPredictor:
 
             if len(sequences) == 0:
                 print("⚠️ 无法构建序列，使用频率分析作为后备")
-                frequency_predictor = FrequencyPredictor(self.analyzer)
-                return frequency_predictor.predict(data, count)
+                return run_frequency_fallback(self, data, count, 'empty_sequences')
 
             # 构建和训练模型
             device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -3856,12 +3931,10 @@ class TransformerPredictor:
 
         except ImportError:
             print("⚠️ PyTorch未安装，使用频率分析作为后备")
-            frequency_predictor = FrequencyPredictor(self.analyzer)
-            return frequency_predictor.predict(data, count)
+            return run_frequency_fallback(self, data, count, 'pytorch_unavailable')
         except Exception as e:
             print(f"⚠️ Transformer预测失败: {e}")
-            frequency_predictor = FrequencyPredictor(self.analyzer)
-            return frequency_predictor.predict(data, count)
+            return run_frequency_fallback(self, data, count, 'prediction_error')
 
     def _prepare_sequences(self, data: pd.DataFrame, seq_length: int = 10):
         """准备序列数据"""
@@ -3923,7 +3996,7 @@ class TransformerPredictor:
                 )
                 self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
 
-                self.output_projection = nn.Linear(d_model, 80)  # 输出80个号码的概率
+                self.output_projection = nn.Linear(d_model, 80)  # 输出80个号码的排序分
                 self.dropout = nn.Dropout(0.1)
 
             def _create_positional_encoding(self, max_len, d_model):
@@ -4041,17 +4114,21 @@ class TransformerPredictor:
         if not prediction_sequence:
             raise ValueError("缺少Transformer预测窗口")
 
+        target_count = min(max(int(count), 0), 80)
+        if target_count == 0:
+            return [], []
+
         last_seq = torch.tensor([prediction_sequence], dtype=torch.long).to(device)
 
         with torch.no_grad():
             probabilities = model(last_seq)[0].cpu().numpy()
 
-        # 选择概率最高的号码
+        # 选择排序分最高的号码
         number_probs = [(i + 1, prob) for i, prob in enumerate(probabilities)]
         number_probs.sort(key=lambda x: (-x[1], x[0]))
 
-        predicted_numbers = [num for num, _ in number_probs[:count]]
-        confidence_scores = [float(prob) for _, prob in number_probs[:count]]
+        predicted_numbers = [num for num, _ in number_probs[:target_count]]
+        confidence_scores = [float(prob) for _, prob in number_probs[:target_count]]
 
         return predicted_numbers, confidence_scores
 
@@ -4063,11 +4140,14 @@ class GraphNeuralNetworkPredictor:
         self.analyzer = analyzer
         self.model = None
         self.validation_jaccard_score = 0.0
+        self.last_fallback_algorithm = None
+        self.last_fallback_reason = None
 
     def predict(self, data: pd.DataFrame, count: int = 30, **kwargs) -> Tuple[List[int], List[float]]:
         """图传播预测"""
+        reset_prediction_metadata(self)
         print(f"🔄 执行图传播预测...")
-        print(f"分析数据: {len(data)}期")
+        print(f"分析数据: {safe_period_count(data)}期")
 
         try:
             import torch
@@ -4075,15 +4155,13 @@ class GraphNeuralNetworkPredictor:
             # 检查数据量
             if len(data) < 20:
                 print("⚠️ 数据不足，使用频率分析作为后备")
-                frequency_predictor = FrequencyPredictor(self.analyzer)
-                return frequency_predictor.predict(data, count)
+                return run_frequency_fallback(self, data, count, 'insufficient_history')
 
             newest_first_data = self._sort_newest_first(data)
             train_samples = self._prepare_graph_training_samples(newest_first_data)
             if not train_samples:
                 print("⚠️ 图传播训练样本不足，使用频率分析作为后备")
-                frequency_predictor = FrequencyPredictor(self.analyzer)
-                return frequency_predictor.predict(data, count)
+                return run_frequency_fallback(self, data, count, 'insufficient_training_samples')
 
             device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
             print(f"使用设备: {device}")
@@ -4106,12 +4184,10 @@ class GraphNeuralNetworkPredictor:
 
         except ImportError:
             print("⚠️ PyTorch未安装，使用频率分析作为后备")
-            frequency_predictor = FrequencyPredictor(self.analyzer)
-            return frequency_predictor.predict(data, count)
+            return run_frequency_fallback(self, data, count, 'pytorch_unavailable')
         except Exception as e:
             print(f"⚠️ 图传播预测失败: {e}")
-            frequency_predictor = FrequencyPredictor(self.analyzer)
-            return frequency_predictor.predict(data, count)
+            return run_frequency_fallback(self, data, count, 'prediction_error')
 
     def _build_number_graph(self, data: pd.DataFrame):
         """构建号码关系图"""
@@ -4344,7 +4420,7 @@ class MonteCarloPredictor:
 
         print(f"🔄 执行蒙特卡洛模拟预测...")
         print(
-            f"分析数据: {len(data)}期，模拟次数: {num_simulations}，"
+            f"分析数据: {safe_period_count(data)}期，模拟次数: {num_simulations}，"
             f"抽样模型: {sampling_model}，随机种子: {random_seed}"
         )
 
@@ -4378,7 +4454,7 @@ class MonteCarloPredictor:
         if sampling_model == 'official_uniform':
             return np.full(80, 1 / 80)
 
-        if prior_strength <= 0:
+        if not np.isfinite(prior_strength) or prior_strength <= 0:
             raise ValueError("prior_strength必须大于0")
 
         counts = self._extract_number_counts(data)
@@ -4458,11 +4534,14 @@ class ClusteringPredictor:
 
     def __init__(self, analyzer):
         self.analyzer = analyzer
+        self.last_fallback_algorithm = None
+        self.last_fallback_reason = None
 
     def predict(self, data: pd.DataFrame, count: int = 30, **kwargs) -> Tuple[List[int], List[float]]:
         """聚类分析预测"""
+        reset_prediction_metadata(self)
         print(f"🔄 执行聚类分析预测...")
-        print(f"分析数据: {len(data)}期")
+        print(f"分析数据: {safe_period_count(data)}期")
 
         try:
             from sklearn.preprocessing import StandardScaler
@@ -4476,13 +4555,14 @@ class ClusteringPredictor:
             else:
                 data = data.copy().reset_index(drop=True)
 
+            data = filter_valid_draws(data)
+
             # 特征提取
             features = self._extract_clustering_features(data)
 
             if len(features) < 10:
                 print("⚠️ 数据不足，使用频率分析作为后备")
-                frequency_predictor = FrequencyPredictor(self.analyzer)
-                return frequency_predictor.predict(data, count)
+                return run_frequency_fallback(self, data, count, 'insufficient_valid_history')
 
             # 特征标准化
             scaler = StandardScaler()
@@ -4504,12 +4584,10 @@ class ClusteringPredictor:
 
         except ImportError:
             print("⚠️ scikit-learn功能不完整，使用频率分析作为后备")
-            frequency_predictor = FrequencyPredictor(self.analyzer)
-            return frequency_predictor.predict(data, count)
+            return run_frequency_fallback(self, data, count, 'sklearn_unavailable')
         except Exception as e:
             print(f"⚠️ 聚类分析失败: {e}")
-            frequency_predictor = FrequencyPredictor(self.analyzer)
-            return frequency_predictor.predict(data, count)
+            return run_frequency_fallback(self, data, count, 'prediction_error')
 
     def _extract_clustering_features(self, data: pd.DataFrame):
         """提取聚类特征"""
@@ -4657,13 +4735,19 @@ class ClusteringPredictor:
 
     def _generate_cluster_prediction(self, cluster_indices, data, count):
         """基于聚类样本生成预测"""
+        target_count = min(max(int(count), 0), 80)
+        if target_count == 0:
+            return [], []
+
         # 统计聚类中号码的出现频率
         number_frequencies = np.zeros(80)
 
         for idx in cluster_indices:
             if idx < len(data):
                 row = data.iloc[idx]
-                numbers = [int(row[f'num{i}']) for i in range(1, 21)]
+                numbers = extract_row_numbers(row)
+                if not validate_numbers_for_draw(numbers):
+                    continue
                 for num in numbers:
                     number_frequencies[num - 1] += 1
 
@@ -4675,8 +4759,8 @@ class ClusteringPredictor:
         number_probs = [(i + 1, freq) for i, freq in enumerate(number_frequencies)]
         number_probs.sort(key=lambda x: x[1], reverse=True)
 
-        predicted_numbers = [num for num, _ in number_probs[:count]]
-        confidence_scores = [float(freq) for _, freq in number_probs[:count]]
+        predicted_numbers = [num for num, _ in number_probs[:target_count]]
+        confidence_scores = [float(freq) for _, freq in number_probs[:target_count]]
 
         # 归一化置信度
         if confidence_scores:
@@ -4694,22 +4778,26 @@ class AdvancedEnsemblePredictor:
         self.num_rounds = 2000
         self.window_size = 5
         self.validation_jaccard_scores: Dict[str, float] = {}
+        self.last_fallback_algorithm = None
+        self.last_fallback_reason = None
 
     def predict(self, data: pd.DataFrame, count: int = 30, **kwargs) -> Tuple[List[int], List[float]]:
         """自适应集成学习预测"""
+        reset_prediction_metadata(self)
         print(f"🔄 执行自适应集成学习预测...")
-        print(f"分析数据: {len(data)}期")
+        print(f"分析数据: {safe_period_count(data)}期")
 
         try:
             from sklearn.ensemble import RandomForestClassifier
+
+            data = filter_valid_draws(ensure_oldest_first(data))
 
             # 准备训练数据
             X, y = self._prepare_ensemble_data(data)
 
             if len(X) < 20:
                 print("⚠️ 数据不足，使用频率分析作为后备")
-                frequency_predictor = FrequencyPredictor(self.analyzer)
-                return frequency_predictor.predict(data, count)
+                return run_frequency_fallback(self, data, count, 'insufficient_valid_history')
 
             X_train, X_val, y_train, y_val = split_time_series_tail_validation(X, y)
 
@@ -4734,12 +4822,10 @@ class AdvancedEnsemblePredictor:
 
         except ImportError:
             print("⚠️ scikit-learn功能不完整，使用频率分析作为后备")
-            frequency_predictor = FrequencyPredictor(self.analyzer)
-            return frequency_predictor.predict(data, count)
+            return run_frequency_fallback(self, data, count, 'sklearn_unavailable')
         except Exception as e:
             print(f"⚠️ 自适应集成学习失败: {e}")
-            frequency_predictor = FrequencyPredictor(self.analyzer)
-            return frequency_predictor.predict(data, count)
+            return run_frequency_fallback(self, data, count, 'prediction_error')
 
     def _prepare_ensemble_data(self, data: pd.DataFrame):
         """准备集成学习数据"""
@@ -4749,7 +4835,7 @@ class AdvancedEnsemblePredictor:
         # 使用滑动窗口创建训练样本
         window_size = self.window_size
 
-        ordered_data = ensure_oldest_first(data)
+        ordered_data = filter_valid_draws(ensure_oldest_first(data))
         for i in range(window_size, len(ordered_data)):
             # 特征：前window_size期的统计信息
             history_window = ordered_data.iloc[i - window_size:i]
@@ -4781,7 +4867,7 @@ class AdvancedEnsemblePredictor:
     def _build_prediction_features(self, data: pd.DataFrame, window_size: Optional[int] = None) -> np.ndarray:
         """用最新历史窗口构造下一期预测特征。"""
         window_size = self.window_size if window_size is None else window_size
-        ordered_data = ensure_oldest_first(data)
+        ordered_data = filter_valid_draws(ensure_oldest_first(data))
         if len(ordered_data) < window_size:
             raise ValueError("构造集成学习预测窗口的数据不足")
 
@@ -4922,9 +5008,9 @@ class AdvancedEnsemblePredictor:
         if successful_predictions == 0:
             raise ValueError("所有集成模型预测失败")
 
-        # 选择概率最高的号码
+        # 选择排序分最高的号码
         number_scores = {i + 1: float(prob) for i, prob in enumerate(ensemble_predictions)}
-        return rank_number_scores(number_scores, count)
+        return safe_rank_number_scores(number_scores, count)
 
 
 class BayesianPredictor:
@@ -4939,7 +5025,7 @@ class BayesianPredictor:
         prior_strength = float(kwargs.get('prior_strength', self.prior_strength))
 
         print(f"🔄 执行贝叶斯Dirichlet后验评分预测...")
-        print(f"分析数据: {len(data)}期，Dirichlet先验强度: {prior_strength}")
+        print(f"分析数据: {safe_period_count(data)}期，Dirichlet先验强度: {prior_strength}")
 
         posterior_alpha = self._build_dirichlet_posterior(data, prior_strength)
         posterior_mean = self._calculate_posterior_mean(posterior_alpha)
@@ -4956,7 +5042,7 @@ class BayesianPredictor:
 
     def _build_dirichlet_posterior(self, data: pd.DataFrame, prior_strength: float) -> np.ndarray:
         """用历史出现次数更新对称Dirichlet先验。"""
-        if prior_strength <= 0:
+        if not np.isfinite(prior_strength) or prior_strength <= 0:
             raise ValueError("prior_strength必须大于0")
 
         posterior_alpha = np.full(80, prior_strength, dtype=float)
@@ -5049,17 +5135,28 @@ class SuperPredictor:
     def predict(self, data: pd.DataFrame, count: int = 30, **kwargs) -> Tuple[List[int], List[float]]:
         """综合排序融合器。"""
         print(f"🔄 执行综合排序融合器...")
-        print(f"分析数据: {len(data)}期，融合算法: {len(self.predictors)}种")
+        print(f"分析数据: {safe_period_count(data)}期，融合算法: {len(self.predictors)}种")
+
+        if data is None or data.empty or count <= 0:
+            return [], []
 
         # 收集所有预测结果
         all_predictions = {}
         all_confidences = {}
+        active_signal_sources = set()
 
         for name, predictor in self.predictors.items():
             try:
                 numbers, confidences = predictor.predict(data, count * 2)  # 获取更多候选
                 if not numbers:
                     continue
+
+                fallback_algorithm = getattr(predictor, 'last_fallback_algorithm', None)
+                signal_source = fallback_algorithm or name
+                if signal_source in active_signal_sources:
+                    print(f"⚠️ {name} 实际信号源为 {signal_source}，跳过重复融合")
+                    continue
+                active_signal_sources.add(signal_source)
 
                 all_predictions[name] = numbers
                 all_confidences[name] = confidences
@@ -5081,7 +5178,8 @@ class SuperPredictor:
         print(f"✅ 综合排序融合完成")
         print(f"融合了 {len([w for w in weights.values() if w > 0])} 个有效预测器")
         print(f"预测号码: {final_numbers[:10]}...")
-        print(f"平均置信度: {np.mean(final_confidences):.3f}")
+        avg_score = float(np.mean(final_confidences)) if final_confidences else 0.0
+        print(f"平均排序分: {avg_score:.3f}")
 
         return final_numbers, final_confidences
 
@@ -5123,7 +5221,10 @@ class SuperPredictor:
                     number_scores[number] = 0
                 number_scores[number] += weighted_score
 
-        return rank_number_scores(number_scores, count)
+        if not number_scores:
+            return [], []
+
+        return safe_rank_number_scores(number_scores, count)
 
 
 class HighConfidencePredictor:
@@ -5139,8 +5240,16 @@ class HighConfidencePredictor:
         print(f"🔄 执行质量门控预测系统...")
         print(f"质量门控阈值: {self.confidence_threshold:.1%}")
 
+        data = filter_valid_draws(ensure_newest_first(data))
+        if data.empty or count <= 0:
+            return [], []
+
         # 使用超级预测器获得初始预测
         numbers, confidences = self.super_predictor.predict(data, count)
+
+        if self._validate_model_output(numbers) < 1.0:
+            print("⚠️ 模型输出未通过硬性业务校验")
+            return [], []
 
         # 6维置信度评估
         confidence_dimensions = self._evaluate_confidence_dimensions(data, numbers, confidences)
@@ -5165,6 +5274,7 @@ class HighConfidencePredictor:
 
     def _evaluate_confidence_dimensions(self, data, numbers, confidences):
         """6维置信度评估"""
+        data = filter_valid_draws(ensure_newest_first(data))
         dimensions = {}
 
         # 1. 模型一致性
@@ -5182,9 +5292,9 @@ class HighConfidencePredictor:
         historical_overlap = self._calculate_historical_accuracy(data, numbers)
         dimensions['historical_accuracy'] = historical_overlap
 
-        # 5. 统计显著性
-        statistical_significance = self._calculate_statistical_significance(data, numbers)
-        dimensions['statistical_significance'] = statistical_significance
+        # 5. 均值一致性，不代表统计显著性或p-value。
+        mean_consistency = self._calculate_statistical_significance(data, numbers)
+        dimensions['statistical_significance'] = mean_consistency
 
         # 6. 预测稳定性
         prediction_stability = self._calculate_prediction_stability(data, numbers)
@@ -5195,6 +5305,7 @@ class HighConfidencePredictor:
 
     def _calculate_pattern_strength(self, data):
         """计算模式强度"""
+        data = filter_valid_draws(ensure_newest_first(data))
         if len(data) < 10:
             return 0.1
 
@@ -5213,20 +5324,28 @@ class HighConfidencePredictor:
 
     def _calculate_historical_accuracy(self, data, predicted_numbers):
         """计算候选号码与历史频率结构的一致性。"""
+        normalized_numbers = normalize_candidate_numbers(predicted_numbers)
+        if normalized_numbers is None:
+            return 0.0
+
+        data = filter_valid_draws(ensure_newest_first(data))
         if len(data) < 5:
             return 0.5
 
-        frequency = FrequencyPredictor(self.analyzer)._calculate_frequency(ensure_newest_first(data))
-        if not predicted_numbers:
-            return 0.0
+        frequency = FrequencyPredictor(self.analyzer)._calculate_frequency(data)
 
-        avg_frequency = np.mean([frequency.get(num, 0.0) for num in predicted_numbers])
+        avg_frequency = np.mean([frequency.get(num, 0.0) for num in normalized_numbers])
         return float(min(1.0, avg_frequency / max(THEORETICAL_SINGLE_PROBABILITY, 1e-9)))
 
     def _calculate_statistical_significance(self, data, predicted_numbers):
-        """计算统计显著性"""
+        """计算候选均值与历史均值的一致性，不是统计显著性。"""
+        data = filter_valid_draws(ensure_newest_first(data))
         if len(data) < 10:
             return 0.3
+
+        normalized_numbers = normalize_candidate_numbers(predicted_numbers)
+        if normalized_numbers is None:
+            return 0.0
 
         # 计算预测号码的统计特征与历史数据的一致性
         historical_avg = []
@@ -5234,7 +5353,7 @@ class HighConfidencePredictor:
             numbers = [int(row[f'num{i}']) for i in range(1, 21)]
             historical_avg.append(np.mean(numbers))
 
-        predicted_avg = np.mean(predicted_numbers) if predicted_numbers else 40
+        predicted_avg = np.mean(normalized_numbers) if normalized_numbers else 40
         historical_mean = np.mean(historical_avg)
         historical_std = np.std(historical_avg)
 
@@ -5243,23 +5362,23 @@ class HighConfidencePredictor:
 
         # Z-score计算
         z_score = abs(predicted_avg - historical_mean) / historical_std
-        significance = max(0, 1.0 - z_score / 3.0)  # 3个标准差内为显著
+        significance = max(0, 1.0 - z_score / 3.0)
 
         return significance
 
     def _calculate_prediction_stability(self, data, predicted_numbers):
         """计算预测稳定性"""
-        # 多次预测的一致性（简化实现）
-        if len(predicted_numbers) < 5:
-            return 0.2
+        normalized_numbers = normalize_candidate_numbers(predicted_numbers)
+        if normalized_numbers is None:
+            return 0.0
 
-        # 检查预测号码的分布是否合理
-        if len(set(predicted_numbers)) != len(predicted_numbers):
-            return 0.1  # 有重复号码，稳定性差
+        # 多次预测的一致性（简化实现）
+        if len(normalized_numbers) < 5:
+            return 0.2
 
         # 检查号码范围分布
         zones = [0] * 8
-        for num in predicted_numbers:
+        for num in normalized_numbers:
             zone_idx = (num - 1) // 10
             zones[zone_idx] += 1
 
@@ -5271,6 +5390,7 @@ class HighConfidencePredictor:
 
     def _four_layer_validation(self, data, numbers, confidence_dimensions):
         """4层验证机制"""
+        data = filter_valid_draws(ensure_newest_first(data))
         validation_results = {}
 
         # 第1层：基础数据验证
@@ -5290,6 +5410,7 @@ class HighConfidencePredictor:
 
     def _validate_data_quality(self, data):
         """验证数据质量"""
+        data = filter_valid_draws(ensure_newest_first(data))
         if len(data) < 20:
             return 0.3
         elif len(data) < 50:
@@ -5303,22 +5424,21 @@ class HighConfidencePredictor:
             return 0.0
 
         # 检查号码范围
-        if any(num < 1 or num > 80 for num in numbers):
+        normalized_numbers = normalize_candidate_numbers(numbers)
+        if normalized_numbers is None:
             return 0.0
-
-        # 检查重复
-        if len(set(numbers)) != len(numbers):
-            return 0.3
 
         return 1.0
 
     def _validate_statistical_consistency(self, data, numbers):
         """验证统计一致性"""
-        if not numbers or len(data) == 0:
+        data = filter_valid_draws(ensure_newest_first(data))
+        normalized_numbers = normalize_candidate_numbers(numbers)
+        if normalized_numbers is None or len(data) == 0:
             return 0.0
 
         # 检查和值是否在合理范围内
-        predicted_sum = sum(numbers)
+        predicted_sum = sum(normalized_numbers)
 
         historical_sums = []
         for _, row in data.iterrows():
@@ -5338,21 +5458,22 @@ class HighConfidencePredictor:
 
     def _validate_business_logic(self, numbers):
         """验证业务逻辑"""
-        if not numbers:
+        normalized_numbers = normalize_candidate_numbers(numbers)
+        if normalized_numbers is None:
             return 0.0
 
         # 检查号码分布的合理性
         score = 1.0
 
         # 奇偶比例检查
-        odd_count = sum(1 for num in numbers if num % 2 == 1)
-        odd_ratio = odd_count / len(numbers)
+        odd_count = sum(1 for num in normalized_numbers if num % 2 == 1)
+        odd_ratio = odd_count / len(normalized_numbers)
         if odd_ratio < 0.3 or odd_ratio > 0.7:
             score *= 0.8
 
         # 大小比例检查
-        big_count = sum(1 for num in numbers if num > 40)
-        big_ratio = big_count / len(numbers)
+        big_count = sum(1 for num in normalized_numbers if num > 40)
+        big_ratio = big_count / len(normalized_numbers)
         if big_ratio < 0.3 or big_ratio > 0.7:
             score *= 0.8
 
@@ -5434,13 +5555,10 @@ class EnsemblePredictor:
                     final_scores[num] = 0
                 final_scores[num] += weight * score
 
-        # 排序并选择前count个
-        sorted_predictions = sorted(final_scores.items(), key=lambda x: x[1], reverse=True)
+        if not final_scores:
+            return [], []
 
-        predicted_numbers = [num for num, _ in sorted_predictions[:count]]
-        confidence_scores = [score for _, score in sorted_predictions[:count]]
-
-        return predicted_numbers, confidence_scores
+        return safe_rank_number_scores(final_scores, count)
 
 
 class PredictionEngine:

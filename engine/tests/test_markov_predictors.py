@@ -107,6 +107,21 @@ def test_high_order_markov_falls_back_to_lower_order_transition():
     assert third_order_scores[21] > third_order_scores[1]
 
 
+def test_high_order_markov_falls_back_when_history_too_short_for_requested_order():
+    """请求阶数超过历史长度时，应使用可训练低阶Markov而不是频率基线。"""
+    data = make_markov_frame([
+        [1],
+        [21],
+        [1],
+    ])
+
+    first_order_scores = calculate_markov_state_scores(data, order=1)
+    third_order_scores = calculate_markov_state_scores(data, order=3)
+
+    assert first_order_scores[21] > first_order_scores[1]
+    assert third_order_scores[21] > third_order_scores[1]
+
+
 def test_adaptive_markov_fuses_full_per_number_scores():
     """自适应Markov应融合完整80个单号评分并返回唯一号码。"""
     data = make_markov_frame([

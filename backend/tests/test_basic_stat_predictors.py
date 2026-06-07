@@ -66,6 +66,107 @@ def test_frequency_predictor_confidence_uses_absolute_frequency():
     assert scores[:3] == [0.5, 0.25, 0.25]
 
 
+def test_adapter_skips_invalid_database_draws():
+    """适配器转换时应整期跳过非法开奖记录，不能补0污染算法。"""
+    adapter = Happy8AlgorithmAdapter.__new__(Happy8AlgorithmAdapter)
+    historical_data = [
+        {
+            "issue": "2026004",
+            "date": "2026-01-04",
+            "numbers": list(range(1, 21)),
+        },
+        {
+            "issue": "2026003",
+            "date": "2026-01-03",
+            "numbers": [0, *range(2, 21)],
+        },
+        {
+            "issue": "2026002",
+            "date": "2026-01-02",
+            "numbers": [1, *range(1, 20)],
+        },
+        {
+            "issue": "2026001",
+            "date": "2026-01-01",
+            "numbers": list(range(1, 20)),
+        },
+    ]
+
+    df = adapter.convert_db_to_happy8_format(historical_data)
+
+    assert df["issue"].tolist() == ["2026004"]
+    assert df[[f"num{i}" for i in range(1, 21)]].iloc[0].tolist() == list(range(1, 21))
+
+
+def test_adapter_returns_empty_frame_when_all_draws_invalid():
+    """全部历史行非法时转换结果应为空DataFrame。"""
+    adapter = Happy8AlgorithmAdapter.__new__(Happy8AlgorithmAdapter)
+
+    df = adapter.convert_db_to_happy8_format([
+        {"issue": "2026001", "date": "2026-01-01", "numbers": [0, *range(2, 21)]}
+    ])
+
+    assert df.empty
+
+
+def test_adapter_empty_prediction_confidence_is_zero():
+    """空预测不能展示中性置信度。"""
+    adapter = Happy8AlgorithmAdapter.__new__(Happy8AlgorithmAdapter)
+
+    result = adapter.convert_original_result([], [], "high_confidence")
+
+    assert result["confidence_score"] == 0.0
+    assert result["analysis_data"]["no_prediction_reason"] == "empty_prediction"
+    assert result["analysis_data"]["fallback_used"] is False
+
+
+def test_adapter_includes_predictor_fallback_metadata():
+    """原算法内部降级时，API分析数据应标明实际执行算法。"""
+    class FakeFallbackPredictor:
+        def __init__(self):
+            self.last_fallback_algorithm = None
+            self.last_fallback_reason = None
+
+        def predict(self, data, count, **params):
+            self.last_fallback_algorithm = "frequency"
+            self.last_fallback_reason = "tensorflow_unavailable"
+            return [1, 2, 3, 4, 5], [1.0, 0.8, 0.6, 0.4, 0.2]
+
+    adapter = Happy8AlgorithmAdapter.__new__(Happy8AlgorithmAdapter)
+    predictor = FakeFallbackPredictor()
+    adapter.original_analyzer = type(
+        "Analyzer",
+        (),
+        {
+            "prediction_engine": type(
+                "Engine",
+                (),
+                {"predictors": {"lstm": predictor}},
+            )()
+        },
+    )()
+
+    historical_data = [
+        {
+            "issue": f"2026{index:03d}",
+            "date": "2026-01-01",
+            "numbers": list(range(1, 21)),
+        }
+        for index in range(1, 12)
+    ]
+
+    async def run():
+        return await adapter.execute_original_algorithm("lstm", historical_data, 5, {})
+
+    import asyncio
+
+    result = asyncio.run(run())
+
+    assert result["analysis_data"]["fallback_used"] is True
+    assert result["analysis_data"]["fallback_algorithm"] == "frequency"
+    assert result["analysis_data"]["fallback_reason"] == "tensorflow_unavailable"
+
+
 def test_hot_cold_predictor_uses_head_as_recent_window_and_deduplicates():
     """冷热预测应使用最新head窗口，且冷热组合结果不能重复。"""
     recent_draws = [
