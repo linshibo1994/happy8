@@ -373,7 +373,7 @@ class PredictionService:
         """执行原始Happy8预测算法"""
         
         # 获取历史数据
-        historical_data = await self._get_historical_data(periods)
+        historical_data = await self._get_historical_data(periods, target_issue)
         
         if len(historical_data) < 10:
             raise BusinessException.insufficient_data("历史数据不足")
@@ -409,11 +409,29 @@ class PredictionService:
             logger.error(f"原始算法 {algorithm} 执行失败: {e}")
             raise BusinessException.prediction_failed(f"算法 {algorithm} 执行失败: {str(e)}")
     
-    async def _get_historical_data(self, periods: int) -> List[Dict[str, Any]]:
-        """获取历史开奖数据"""
+    async def _get_historical_data(
+        self, periods: int, target_issue: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """获取预测训练用历史数据。
+
+        历史目标期只使用目标期之前的数据；未来目标期使用最新历史数据。
+        返回值保持时间正序，适配器再转换为原始算法需要的最新期在前。
+        """
         try:
-            results = self.db.query(LotteryResult).order_by(
-                LotteryResult.draw_date.desc()
+            query = self.db.query(LotteryResult)
+
+            if target_issue:
+                latest_issue_row = (
+                    self.db.query(LotteryResult.issue)
+                    .order_by(LotteryResult.issue.desc())
+                    .first()
+                )
+                latest_issue = latest_issue_row[0] if latest_issue_row else None
+                if latest_issue and str(target_issue) <= str(latest_issue):
+                    query = query.filter(LotteryResult.issue < str(target_issue))
+
+            results = query.order_by(
+                LotteryResult.issue.desc()
             ).limit(periods).all()
             
             data = []

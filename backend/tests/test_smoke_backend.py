@@ -232,3 +232,5 @@ async def test_execute_original_prediction_dispatches_all_supported_algorithms()
         assert call_type == expected_call_type.get(algorithm, "execute_original_algorithm")
         if call_type == "execute_original_algorithm":
             assert call_algo == service.algorithm_mapping[algorithm]
+
+    assert service._get_historical_data.await_count == len(service.algorithm_mapping)

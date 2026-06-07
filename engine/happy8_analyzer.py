@@ -2665,24 +2665,21 @@ class FrequencyPredictor:
     def predict(self, data: pd.DataFrame, count: int = 30, **kwargs) -> Tuple[List[int], List[float]]:
         """基于频率分析的预测"""
         print("执行频率分析预测...")
-
-        if data is None or data.empty or count <= 0:
-            return [], []
-
-        data = data.copy()
-        if 'issue' in data.columns:
-            data['issue'] = data['issue'].astype(str)
-            data = data.sort_values('issue', ascending=False).reset_index(drop=True)
         
         # 统计每个号码的出现频率
         frequency_stats = self._calculate_frequency(data)
         
         # 按频率排序
-        sorted_numbers = sorted(frequency_stats.items(), key=lambda x: (-x[1], x[0]))
+        sorted_numbers = sorted(frequency_stats.items(), key=lambda x: x[1], reverse=True)
         
         # 选择前count个号码
         predicted_numbers = [num for num, freq in sorted_numbers[:count]]
-        confidence_scores = [float(freq) for num, freq in sorted_numbers[:count]]
+        confidence_scores = [freq for num, freq in sorted_numbers[:count]]
+        
+        # 归一化置信度
+        if confidence_scores:
+            max_confidence = max(confidence_scores)
+            confidence_scores = [score / max_confidence for score in confidence_scores]
         
         return predicted_numbers, confidence_scores
     
@@ -2690,9 +2687,6 @@ class FrequencyPredictor:
         """计算号码频率"""
         frequency = {}
         total_periods = len(data)
-
-        if total_periods <= 0:
-            return {num: 0.0 for num in range(1, 81)}
         
         # 统计每个号码出现次数
         for num in range(1, 81):
@@ -2701,7 +2695,7 @@ class FrequencyPredictor:
                 numbers = [row[f'num{i}'] for i in range(1, 21)]
                 if num in numbers:
                     count += 1
-            frequency[num] = count / total_periods
+            frequency[num] = count / total_periods if total_periods > 0 else 0
         
         return frequency
 
@@ -2715,18 +2709,10 @@ class HotColdPredictor:
     def predict(self, data: pd.DataFrame, count: int = 30, **kwargs) -> Tuple[List[int], List[float]]:
         """基于冷热号分析的预测"""
         print("执行冷热号分析预测...")
-
-        if data is None or data.empty or count <= 0:
-            return [], []
-
-        data = data.copy()
-        if 'issue' in data.columns:
-            data['issue'] = data['issue'].astype(str)
-            data = data.sort_values('issue', ascending=False).reset_index(drop=True)
         
         # 计算最近期数的频率
         recent_periods = min(100, len(data))
-        recent_data = data.head(recent_periods)
+        recent_data = data.tail(recent_periods)
         
         # 计算热号（高频号码）
         hot_numbers = self._get_hot_numbers(recent_data)
@@ -2735,53 +2721,18 @@ class HotColdPredictor:
         cold_numbers = self._get_cold_numbers(data)
         
         # 组合预测：70%热号 + 30%冷号
-        hot_count = min(count, max(1, int(count * 0.7)))
+        hot_count = int(count * 0.7)
         cold_count = count - hot_count
         
-        predicted_numbers = []
-        prediction_sources = []
-        seen_numbers = set()
-
-        for num in hot_numbers:
-            if len([source for source in prediction_sources if source == 'hot']) >= hot_count:
-                break
-            if num in seen_numbers:
-                continue
-            predicted_numbers.append(num)
-            prediction_sources.append('hot')
-            seen_numbers.add(num)
-
-        for num in cold_numbers:
-            if len([source for source in prediction_sources if source == 'cold']) >= cold_count:
-                break
-            if num in seen_numbers:
-                continue
-            predicted_numbers.append(num)
-            prediction_sources.append('cold')
-            seen_numbers.add(num)
-
-        for num in hot_numbers + cold_numbers + list(range(1, 81)):
-            if len(predicted_numbers) >= count:
-                break
-            if num in seen_numbers:
-                continue
-            predicted_numbers.append(num)
-            prediction_sources.append('fill')
-            seen_numbers.add(num)
+        predicted_numbers = hot_numbers[:hot_count] + cold_numbers[:cold_count]
         
         # 生成置信度分数
         confidence_scores = []
-        source_ranks = {'hot': 0, 'cold': 0, 'fill': 0}
-        for source in prediction_sources:
-            rank = source_ranks[source]
-            source_ranks[source] += 1
-
-            if source == 'hot':
-                confidence_scores.append(0.8 - rank * 0.1 / max(hot_count, 1))
-            elif source == 'cold':
-                confidence_scores.append(0.6 - rank * 0.1 / max(cold_count, 1))
+        for i, num in enumerate(predicted_numbers):
+            if i < hot_count:
+                confidence_scores.append(0.8 - i * 0.1 / hot_count)
             else:
-                confidence_scores.append(max(0.1, 0.5 - rank * 0.1 / max(count, 1)))
+                confidence_scores.append(0.6 - (i - hot_count) * 0.1 / cold_count)
         
         return predicted_numbers, confidence_scores
     
@@ -2797,7 +2748,7 @@ class HotColdPredictor:
             frequency[num] = count
         
         # 按频率排序
-        sorted_numbers = sorted(frequency.items(), key=lambda x: (-x[1], x[0]))
+        sorted_numbers = sorted(frequency.items(), key=lambda x: x[1], reverse=True)
         return [num for num, _ in sorted_numbers]
     
     def _get_cold_numbers(self, data: pd.DataFrame) -> List[int]:
@@ -2809,14 +2760,15 @@ class HotColdPredictor:
             missing_periods[num] = 0
             
             # 从最新期开始往前查找
-            for _, row in data.iterrows():
+            for i in range(len(data) - 1, -1, -1):
+                row = data.iloc[i]
                 numbers = [row[f'num{i}'] for i in range(1, 21)]
                 if num in numbers:
                     break
                 missing_periods[num] += 1
         
         # 按遗漏期数排序
-        sorted_numbers = sorted(missing_periods.items(), key=lambda x: (-x[1], x[0]))
+        sorted_numbers = sorted(missing_periods.items(), key=lambda x: x[1], reverse=True)
         return [num for num, _ in sorted_numbers]
 
 
@@ -2830,32 +2782,22 @@ class MissingPredictor:
         """基于遗漏分析的预测"""
         print("执行遗漏分析预测...")
 
-        if data is None or data.empty or count <= 0:
-            return [], []
-
-        data = data.copy()
-        if 'issue' in data.columns:
-            data['issue'] = data['issue'].astype(str)
-            data = data.sort_values('issue', ascending=False).reset_index(drop=True)
-
         # 计算每个号码的遗漏期数
         missing_stats = self._calculate_missing_periods(data)
 
-        # 计算遗漏启发式评分；快乐8公平开奖下单号理论概率仍为25%。
+        # 计算理论回补概率
         rebound_probs = self._calculate_rebound_probability(missing_stats, data)
 
         # 按回补概率排序
-        sorted_probs = sorted(rebound_probs.items(), key=lambda x: (-x[1], x[0]))
+        sorted_probs = sorted(rebound_probs.items(), key=lambda x: x[1], reverse=True)
 
         predicted_numbers = [num for num, prob in sorted_probs[:count]]
         confidence_scores = [prob for num, prob in sorted_probs[:count]]
 
+        # 归一化置信度
         if confidence_scores:
             max_confidence = max(confidence_scores)
-            confidence_scores = [
-                score / max_confidence if max_confidence > 0 else 0.0
-                for score in confidence_scores
-            ]
+            confidence_scores = [score / max_confidence for score in confidence_scores]
 
         return predicted_numbers, confidence_scores
 
@@ -2867,7 +2809,8 @@ class MissingPredictor:
             missing_periods[num] = 0
 
             # 从最新期开始往前查找
-            for _, row in data.iterrows():
+            for i in range(len(data) - 1, -1, -1):
+                row = data.iloc[i]
                 numbers = [row[f'num{j}'] for j in range(1, 21)]
                 if num in numbers:
                     break
@@ -2876,7 +2819,7 @@ class MissingPredictor:
         return missing_periods
 
     def _calculate_rebound_probability(self, missing_stats: Dict[int, int], data: pd.DataFrame) -> Dict[int, float]:
-        """计算遗漏启发式评分。"""
+        """计算回补概率"""
         rebound_probs = {}
 
         # 计算历史平均出现周期
@@ -2884,9 +2827,9 @@ class MissingPredictor:
 
         for num in range(1, 81):
             missing_periods = missing_stats[num]
-            avg_cycle = max(float(avg_cycles.get(num, 4.0)), 1.0)
+            avg_cycle = avg_cycles.get(num, 5)  # 默认5期周期
 
-            # 基于遗漏期数计算排序分，不解释为真实开奖概率。
+            # 基于遗漏期数计算回补概率
             if missing_periods == 0:
                 rebound_probs[num] = 0.1  # 刚出现的号码概率较低
             elif missing_periods <= avg_cycle:
@@ -2901,26 +2844,22 @@ class MissingPredictor:
     def _calculate_average_cycles(self, data: pd.DataFrame) -> Dict[int, float]:
         """计算每个号码的平均出现周期"""
         avg_cycles = {}
-        default_cycle = 4.0
-
-        if data is None or data.empty:
-            return {num: default_cycle for num in range(1, 81)}
 
         for num in range(1, 81):
             appearances = []
 
             # 找到所有出现的期数
-            for pos, (_, row) in enumerate(data.iterrows()):
+            for i, row in data.iterrows():
                 numbers = [row[f'num{j}'] for j in range(1, 21)]
                 if num in numbers:
-                    appearances.append(pos)
+                    appearances.append(i)
 
             # 计算平均间隔
             if len(appearances) > 1:
                 intervals = [appearances[i] - appearances[i-1] for i in range(1, len(appearances))]
-                avg_cycles[num] = sum(intervals) / len(intervals) if intervals else default_cycle
+                avg_cycles[num] = sum(intervals) / len(intervals)
             else:
-                avg_cycles[num] = default_cycle
+                avg_cycles[num] = len(data) / 4  # 默认值
 
         return avg_cycles
 
@@ -5578,10 +5517,38 @@ class Happy8Analyzer:
         """加载历史数据"""
         if self.historical_data is None:
             self.historical_data = self.data_manager.load_historical_data()
+            if not self.historical_data.empty and 'issue' in self.historical_data.columns:
+                self.historical_data = self.historical_data.copy()
+                self.historical_data['issue'] = self.historical_data['issue'].astype(str)
+                self.historical_data = self.historical_data.sort_values(
+                    'issue',
+                    ascending=False,
+                ).reset_index(drop=True)
 
         if periods and periods > 0:
-            return self.historical_data.head(periods)  # 改为head，因为数据已经按最新期号排序
-        return self.historical_data
+            return self.historical_data.head(periods).copy()  # 最新期在前
+        return self.historical_data.copy()
+
+    def _select_prediction_training_data(
+        self,
+        target_issue: str,
+        periods: int,
+    ) -> pd.DataFrame:
+        """按预测目标选择训练窗口，返回最新期在前的数据。"""
+        data = self.load_data()
+        if data.empty:
+            return data
+
+        window = data.copy()
+        if 'issue' in window.columns:
+            window['issue'] = window['issue'].astype(str)
+            window = window[window['issue'] < str(target_issue)]
+            window = window.sort_values('issue', ascending=False).reset_index(drop=True)
+
+        if periods and periods > 0:
+            window = window.head(periods)
+
+        return window.reset_index(drop=True)
 
     def crawl_latest_data(self, limit: int = 100) -> pd.DataFrame:
         """爬取最新数据"""
@@ -5613,8 +5580,11 @@ class Happy8Analyzer:
                 **kwargs) -> PredictionResult:
         """智能预测 - 自动判断历史验证模式或未来预测模式"""
 
-        # 加载数据
-        data = self.load_data(periods)
+        # 加载完整历史后按目标期裁剪，避免历史验证时泄露目标期及之后的数据
+        data = self._select_prediction_training_data(
+            target_issue=target_issue,
+            periods=periods,
+        )
 
         if len(data) == 0:
             raise ValueError("没有可用的历史数据")
