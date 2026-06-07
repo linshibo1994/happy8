@@ -188,7 +188,7 @@ class Happy8AlgorithmAdapter:
         if "missing" in self.get_all_available_algorithms():
             return await self.execute_original_algorithm("missing", historical_data, count, params)
         else:
-            # 如果原始系统没有missing算法，我们需要基于原始框架创建一个
+            # 如果原始系统没有missing算法，使用适配器内置确定性回退实现
             return await self._create_missing_predictor(historical_data, count, params)
     
     async def markov_analysis(self, historical_data: List[Dict[str, Any]], count: int, params: Dict[str, Any]) -> Dict[str, Any]:
@@ -244,78 +244,111 @@ class Happy8AlgorithmAdapter:
         return await self.execute_original_algorithm("clustering", historical_data, count, params)
     
     async def _create_missing_predictor(self, historical_data: List[Dict[str, Any]], count: int, params: Dict[str, Any]) -> Dict[str, Any]:
-        """基于原始框架创建遗漏分析预测器"""
-        
-        if not self.original_analyzer:
-            raise RuntimeError("原始分析器不可用")
-        
-        # 创建一个临时的遗漏分析预测器，符合原始框架的接口
-        class MissingPredictor:
-            def __init__(self, analyzer):
-                self.analyzer = analyzer
-            
-            def predict(self, data: pd.DataFrame, count: int = 30, **kwargs) -> Tuple[List[int], List[float]]:
-                """基于遗漏期数的预测"""
-                print("执行遗漏分析预测...")
-                
-                # 统计每个号码的遗漏期数
-                missing_periods = {}
-                for num in range(1, 81):
-                    missing_periods[num] = 0
-                
-                # 从最新数据开始计算遗漏
-                for idx, (_, row) in enumerate(data.iterrows()):
-                    current_numbers = [row[f'num{i}'] for i in range(1, 21) if row[f'num{i}'] > 0]
-                    
-                    for num in range(1, 81):
-                        if num not in current_numbers:
-                            missing_periods[num] += 1
-                        else:
-                            # 号码出现了，遗漏期数已确定
-                            pass
-                
-                # 按遗漏期数排序
-                sorted_missing = sorted(missing_periods.items(), key=lambda x: x[1], reverse=True)
-                
-                # 选择遗漏期数最长的号码
-                predicted_numbers = [num for num, periods in sorted_missing[:count]]
-                
-                # 计算置信度（基于遗漏期数的合理性）
-                confidence_scores = []
-                max_missing = max(missing_periods.values()) if missing_periods.values() else 1
-                
-                for num in predicted_numbers:
-                    # 遗漏期数越长，基础置信度越高，但要考虑合理性
-                    missing_count = missing_periods[num]
-                    base_confidence = missing_count / max_missing if max_missing > 0 else 0.5
-                    
-                    # 加入合理性调整（遗漏过长可能不太合理）
-                    if missing_count > 50:  # 遗漏超过50期
-                        base_confidence *= 0.8
-                    elif missing_count > 30:  # 遗漏超过30期
-                        base_confidence *= 0.9
-                    
-                    confidence_scores.append(max(0.1, min(0.9, base_confidence)))
-                
-                return predicted_numbers, confidence_scores
-        
-        # 创建临时预测器实例
-        temp_predictor = MissingPredictor(self.original_analyzer)
-        
-        # 转换数据并执行预测
+        """执行遗漏分析的内置回退实现。"""
         df = self.convert_db_to_happy8_format(historical_data)
-        predicted_numbers, confidence_scores = temp_predictor.predict(df, count, **params)
+        if df.empty:
+            raise ValueError("没有可用的历史数据")
+
+        predicted_numbers, confidence_scores = self._run_missing_fallback(df, count)
         
         # 转换结果格式
         result = self.convert_original_result(predicted_numbers, confidence_scores, "missing")
         
         return result
+
+    def _run_missing_fallback(self, data: pd.DataFrame, count: int) -> Tuple[List[int], List[float]]:
+        """基于当前遗漏和平均周期生成遗漏预测结果。"""
+        if data is None or data.empty or count <= 0:
+            return [], []
+
+        missing_periods = self._calculate_current_missing_periods(data)
+        avg_cycles = self._calculate_average_cycles(data)
+        rebound_probs = self._calculate_rebound_probabilities(missing_periods, avg_cycles)
+
+        sorted_probs = sorted(rebound_probs.items(), key=lambda item: (-item[1], item[0]))
+        selected = sorted_probs[:count]
+        predicted_numbers = [num for num, _ in selected]
+        confidence_scores = [float(prob) for _, prob in selected]
+
+        if confidence_scores:
+            max_confidence = max(confidence_scores)
+            if max_confidence > 0:
+                confidence_scores = [score / max_confidence for score in confidence_scores]
+
+        return predicted_numbers, confidence_scores
+
+    def _calculate_current_missing_periods(self, data: pd.DataFrame) -> Dict[int, int]:
+        """计算当前遗漏期数；DataFrame 第0行必须是最新期。"""
+        missing_periods = {}
+
+        for num in range(1, 81):
+            missing_periods[num] = 0
+            for _, row in data.iterrows():
+                numbers = [
+                    int(row[f"num{i}"])
+                    for i in range(1, 21)
+                    if int(row[f"num{i}"]) > 0
+                ]
+                if num in numbers:
+                    break
+                missing_periods[num] += 1
+
+        return missing_periods
+
+    def _calculate_average_cycles(self, data: pd.DataFrame) -> Dict[int, float]:
+        """计算每个号码历史出现的平均间隔。"""
+        default_cycle = 4.0
+
+        if data is None or data.empty:
+            return {num: default_cycle for num in range(1, 81)}
+
+        avg_cycles = {}
+        for num in range(1, 81):
+            appearances = []
+            for index, row in data.iterrows():
+                numbers = [
+                    int(row[f"num{i}"])
+                    for i in range(1, 21)
+                    if int(row[f"num{i}"]) > 0
+                ]
+                if num in numbers:
+                    appearances.append(index)
+
+            if len(appearances) > 1:
+                intervals = [
+                    appearances[i] - appearances[i - 1]
+                    for i in range(1, len(appearances))
+                ]
+                avg_cycles[num] = sum(intervals) / len(intervals) if intervals else default_cycle
+            else:
+                avg_cycles[num] = default_cycle
+
+        return avg_cycles
+
+    def _calculate_rebound_probabilities(
+        self,
+        missing_periods: Dict[int, int],
+        avg_cycles: Dict[int, float],
+    ) -> Dict[int, float]:
+        """根据当前遗漏和平均周期计算回补概率。"""
+        rebound_probs = {}
+
+        for num in range(1, 81):
+            missing_count = missing_periods.get(num, 0)
+            avg_cycle = max(float(avg_cycles.get(num, 4.0)), 1.0)
+
+            if missing_count == 0:
+                rebound_probs[num] = 0.1
+            elif missing_count <= avg_cycle:
+                rebound_probs[num] = 0.3 + (missing_count / avg_cycle) * 0.4
+            else:
+                excess_ratio = (missing_count - avg_cycle) / avg_cycle
+                rebound_probs[num] = 0.7 + min(excess_ratio * 0.3, 0.3)
+
+        return rebound_probs
     
     async def get_algorithm_info(self, algorithm: str) -> Dict[str, Any]:
         """获取算法详细信息"""
-        if not self.original_analyzer:
-            return {"available": False, "error": "原始分析器不可用"}
-        
         # missing支持适配器内置回退实现，即使原始引擎未注册也应视为可用
         if algorithm == "missing":
             return {
@@ -326,6 +359,9 @@ class Happy8AlgorithmAdapter:
                 "complexity": self._get_algorithm_complexity(algorithm),
                 "data_requirements": self._get_data_requirements(algorithm),
             }
+
+        if not self.original_analyzer:
+            return {"available": False, "error": "原始分析器不可用"}
 
         available_algorithms = self.get_all_available_algorithms()
         
