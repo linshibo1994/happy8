@@ -2,7 +2,7 @@
 
 from typing import AsyncGenerator, Optional
 from contextlib import asynccontextmanager
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.pool import StaticPool, QueuePool
@@ -20,12 +20,19 @@ class DatabaseManager:
         self._async_engine = None
         self._session_factory: Optional[sessionmaker] = None
         self._async_session_factory = None
+
+    def _get_sync_database_url(self) -> str:
+        """获取同步数据库URL，并为MySQL显式使用PyMySQL驱动。"""
+        db_url = str(settings.DATABASE_URL)
+        if db_url.startswith("mysql://"):
+            return db_url.replace("mysql://", "mysql+pymysql://", 1)
+        return db_url
     
     def get_engine(self) -> Engine:
         """获取同步数据库引擎"""
         if self._engine is None:
             self._engine = create_engine(
-                str(settings.DATABASE_URL),
+                self._get_sync_database_url(),
                 pool_size=settings.DB_POOL_SIZE,
                 max_overflow=settings.DB_MAX_OVERFLOW,
                 pool_timeout=settings.DB_POOL_TIMEOUT,
@@ -43,7 +50,7 @@ class DatabaseManager:
         """获取异步数据库引擎"""
         if self._async_engine is None:
             # 将同步URL转换为异步URL
-            db_url = str(settings.DATABASE_URL)
+            db_url = self._get_sync_database_url()
 
             # 根据数据库类型替换驱动
             if "mysql+pymysql://" in db_url:
@@ -213,7 +220,7 @@ class DatabaseHealthCheck:
         """检查异步数据库连接"""
         try:
             async with get_db_session() as session:
-                result = await session.execute("SELECT 1")
+                result = await session.execute(text("SELECT 1"))
                 return result.scalar() == 1
         except Exception as e:
             database_logger.error(f"异步数据库连接检查失败: {e}")
@@ -225,7 +232,7 @@ class DatabaseHealthCheck:
         try:
             engine = db_manager.get_engine()
             with engine.connect() as conn:
-                result = conn.execute("SELECT 1")
+                result = conn.execute(text("SELECT 1"))
                 return result.scalar() == 1
         except Exception as e:
             database_logger.error(f"同步数据库连接检查失败: {e}")
@@ -238,13 +245,13 @@ class DatabaseHealthCheck:
             async with get_db_session() as session:
                 # MySQL特定查询
                 if "mysql" in str(settings.DATABASE_URL):
-                    result = await session.execute("""
+                    result = await session.execute(text("""
                         SELECT 
                             VERSION() as version,
                             @@character_set_database as charset,
                             @@time_zone as timezone,
                             CONNECTION_ID() as connection_id
-                    """)
+                    """))
                     row = result.first()
                     return {
                         "database_type": "MySQL",
@@ -255,12 +262,12 @@ class DatabaseHealthCheck:
                     }
                 # PostgreSQL特定查询
                 elif "postgresql" in str(settings.DATABASE_URL):
-                    result = await session.execute("""
+                    result = await session.execute(text("""
                         SELECT 
                             version() as version,
                             current_setting('TimeZone') as timezone,
                             pg_backend_pid() as pid
-                    """)
+                    """))
                     row = result.first()
                     return {
                         "database_type": "PostgreSQL",

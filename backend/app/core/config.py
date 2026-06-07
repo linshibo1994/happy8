@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     """应用配置类"""
     
     # 数据库配置
-    DATABASE_URL: str = "mysql://happy8_user:happy8_pass_2025@localhost:3306/happy8_miniprogram"
+    DATABASE_URL: str = "mysql+pymysql://happy8_user:happy8_pass_2025@localhost:3306/happy8_miniprogram"
     
     # Redis配置
     REDIS_URL: str = "redis://:happy8_redis_2025@localhost:6379/0"

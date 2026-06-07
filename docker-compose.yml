@@ -39,7 +39,7 @@ services:
     ports:
       - "8000:8000"
     environment:
-      DATABASE_URL: mysql://happy8_user:happy8_pass_2025@mysql:3306/happy8_miniprogram
+      DATABASE_URL: mysql+pymysql://happy8_user:happy8_pass_2025@mysql:3306/happy8_miniprogram
       REDIS_URL: redis://:happy8_redis_2025@redis:6379/0
       SECRET_KEY: happy8_jwt_secret_key_2025_very_long_and_secure
       ENVIRONMENT: development
