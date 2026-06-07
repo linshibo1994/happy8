@@ -2888,11 +2888,11 @@ class MissingPredictor:
 
             # 基于遗漏期数计算排序分，不解释为真实开奖概率。
             if missing_periods == 0:
-                rebound_probs[num] = 0.1  # 刚出现的号码概率较低
+                rebound_probs[num] = 0.1  # 刚出现的号码排序分较低
             elif missing_periods <= avg_cycle:
                 rebound_probs[num] = 0.3 + (missing_periods / avg_cycle) * 0.4
             else:
-                # 超过平均周期，回补概率增加
+                # 超过平均周期，启发式排序分增加。
                 excess_ratio = (missing_periods - avg_cycle) / avg_cycle
                 rebound_probs[num] = 0.7 + min(excess_ratio * 0.3, 0.3)
 
