@@ -75,6 +75,7 @@ def test_serialize_lottery_result_with_orm_like_object():
     data = serialize_lottery_result(row)
     assert data["issue"] == "2026001"
     assert data["numbers"] == [1, 2, 3]
+    assert data["zone_distribution"] == {"zone_1": 3}
 
 
 def test_parse_draw_datetime_supports_date_and_datetime():

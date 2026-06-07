@@ -23,6 +23,39 @@ export interface LotteryResult {
   zoneDistribution: Record<string, number>
 }
 
+export interface LotteryResultPayload {
+  issue: string
+  numbers: number[]
+  draw_date?: string
+  openedAt?: string
+  sum_value?: number
+  sum?: number
+  odd_count?: number
+  oddCount?: number
+  even_count?: number
+  evenCount?: number
+  big_count?: number
+  bigCount?: number
+  small_count?: number
+  smallCount?: number
+  zone_distribution?: Record<string, number>
+  zoneDistribution?: Record<string, number>
+}
+
+export interface LatestLotteryResponse {
+  results: LotteryResultPayload[]
+  total: number
+}
+
+export interface LotterySyncSummary {
+  updated_count: number
+  latest_result?: LotteryResultPayload | null
+  synced_at?: string | null
+  skipped?: boolean
+  reason?: string
+  trigger?: string
+}
+
 export interface Algorithm {
   name: string
   displayName: string

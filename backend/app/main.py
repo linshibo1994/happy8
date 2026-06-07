@@ -11,6 +11,7 @@ from app.core.cache import init_redis, close_redis
 from app.core.error_handlers import register_exception_handlers
 from app.core.middleware import register_middleware
 from app.core.auth import init_token_blacklist
+from app.services.lottery_sync_service import lottery_sync_service
 
 
 @asynccontextmanager
@@ -21,10 +22,12 @@ async def lifespan(app: FastAPI):
     init_database()
     init_redis()
     init_token_blacklist()
+    await lottery_sync_service.start_scheduler()
 
     yield
 
     # 关闭时清理
+    await lottery_sync_service.stop_scheduler()
     close_database()
     await close_redis()
 

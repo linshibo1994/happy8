@@ -10,6 +10,7 @@ from app.core.exceptions import create_success_response
 from app.models.user import User
 from app.models.prediction import LotteryResult
 from app.services.lottery_service import LotteryService
+from app.services.lottery_sync_service import lottery_sync_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/lottery", tags=["开奖"])
@@ -184,7 +185,6 @@ async def search_results(
 
 @router.post("/sync")
 async def sync_latest_data(
-    db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """同步最新开奖数据（需要管理员权限）"""
@@ -194,11 +194,10 @@ async def sync_latest_data(
                 status_code=status.HTTP_403_FORBIDDEN, detail="权限不足"
             )
 
-        lottery_service = LotteryService(db)
-        updated_count = await lottery_service.sync_latest_data()
+        sync_summary = await lottery_sync_service.sync_latest(force=True, trigger="admin")
 
         return create_success_response(
-            data={"updated_count": updated_count}, message="数据同步成功"
+            data=sync_summary, message="数据同步成功"
         )
     except HTTPException:
         raise
@@ -207,4 +206,18 @@ async def sync_latest_data(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="同步数据失败",
+        )
+
+
+@router.post("/auto-sync")
+async def auto_sync_latest_data():
+    """页面加载或刷新时自动同步最新开奖数据。"""
+    try:
+        sync_summary = await lottery_sync_service.sync_latest(force=False, trigger="page")
+        return create_success_response(data=sync_summary, message="自动同步检查完成")
+    except Exception as exc:
+        logger.error("自动同步开奖数据失败: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="自动同步开奖数据失败",
         )

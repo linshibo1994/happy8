@@ -56,6 +56,13 @@ class Settings(BaseSettings):
     PREDICTION_TIMEOUT: int = 30  # 30秒
     MAX_PREDICTIONS_PER_DAY_FREE: int = 5
     MAX_PREDICTIONS_PER_DAY_VIP: int = 50
+
+    # 开奖数据自动同步配置
+    LOTTERY_AUTO_SYNC_ENABLED: bool = True
+    LOTTERY_PAGE_SYNC_COOLDOWN_SECONDS: int = 300
+    LOTTERY_DAILY_SYNC_HOUR: int = 0
+    LOTTERY_DAILY_SYNC_MINUTE: int = 1
+    APP_TIMEZONE: str = "Asia/Shanghai"
     
     # 文件上传配置
     UPLOAD_PATH: str = "/app/uploads"

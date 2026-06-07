@@ -1,4 +1,5 @@
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 from typing import List, Optional, Dict, Any
 from datetime import datetime, date
 from pathlib import Path
@@ -181,9 +182,15 @@ class LotteryService:
                 )
                 
                 if not existing:
-                    lottery_result = LotteryResult(**result_data)
-                    self.db.add(lottery_result)
-                    saved_count += 1
+                    try:
+                        with self.db.begin_nested():
+                            lottery_result = LotteryResult(**result_data)
+                            self.db.add(lottery_result)
+                            self.db.flush()
+                        saved_count += 1
+                    except IntegrityError:
+                        # 多进程部署时可能并发写入同一期，依赖唯一索引兜底并跳过。
+                        logger.warning("期号 %s 已由其他同步任务写入，跳过", result_data["issue"])
             
             self.db.commit()
             return saved_count
@@ -192,6 +199,29 @@ class LotteryService:
             logger.error(f"同步最新数据失败: {str(e)}")
             self.db.rollback()
             raise
+
+    async def sync_latest_data_with_summary(self) -> Dict[str, Any]:
+        """同步最新开奖数据并返回同步摘要。"""
+        updated_count = await self.sync_latest_data()
+        latest_result = await self.get_latest_result()
+
+        return {
+            "updated_count": updated_count,
+            "latest_result": latest_result,
+            "synced_at": datetime.now().isoformat(),
+        }
+
+    async def get_latest_result(self) -> Optional[Dict[str, Any]]:
+        """获取单条最新开奖结果。"""
+        result = (
+            self.db.query(LotteryResult)
+            .order_by(LotteryResult.draw_date.desc())
+            .first()
+        )
+        if not result:
+            return None
+
+        return self._format_lottery_result(result)
     
     def _format_lottery_result(self, result: LotteryResult) -> Dict[str, Any]:
         """格式化开奖结果"""
@@ -205,6 +235,7 @@ class LotteryService:
             "even_count": result.even_count,
             "big_count": result.big_count,
             "small_count": result.small_count,
+            "zone_distribution": result.zone_distribution,
             "created_at": result.created_at.isoformat()
         }
     
