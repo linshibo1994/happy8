@@ -19,7 +19,7 @@ try:
         Happy8Result, PredictionResult, Happy8Analyzer,
         FrequencyPredictor, HotColdPredictor, MissingPredictor,
         MarkovPredictor, Markov2ndPredictor, Markov3rdPredictor,
-        AdaptiveMarkovPredictor, TransformerPredictor, 
+        AdaptiveMarkovPredictor, TransformerPredictor,
         GraphNeuralNetworkPredictor, MonteCarloPredictor,
         ClusteringPredictor, AdvancedEnsemblePredictor,
         BayesianPredictor, SuperPredictor, HighConfidencePredictor,
@@ -32,40 +32,40 @@ except ImportError as e:
 
 class Happy8AlgorithmAdapter:
     """Happy8原始算法适配器 - 完整集成17种算法"""
-    
+
     def __init__(self):
         self.original_analyzer = None
         self.data_manager = None
-        
+
         if ORIGINAL_HAPPY8_AVAILABLE:
             try:
                 # 确保数据目录存在
                 data_dir = PROJECT_ROOT / "data"
                 data_dir.mkdir(exist_ok=True)
-                
+
                 # 初始化原始分析器
                 self.original_analyzer = Happy8Analyzer(str(data_dir))
                 self.data_manager = DataManager(str(data_dir))
-                
+
             except Exception as e:
                 self.original_analyzer = None
-    
+
     def is_original_available(self) -> bool:
         """检查原始分析器是否可用"""
         return self.original_analyzer is not None
-    
+
     def get_all_available_algorithms(self) -> List[str]:
         """获取所有可用的算法"""
         if self.original_analyzer:
             return list(self.original_analyzer.prediction_engine.predictors.keys())
         else:
             return []
-    
+
     def convert_db_to_happy8_format(self, historical_data: List[Dict[str, Any]]) -> pd.DataFrame:
         """将数据库格式转换为Happy8原始格式"""
         if not historical_data:
             return pd.DataFrame()
-        
+
         # 构建符合原始Happy8格式的DataFrame
         data_list = []
         for item in historical_data:
@@ -73,58 +73,63 @@ class Happy8AlgorithmAdapter:
                 'issue': item['issue'],
                 'date': item['date']
             }
-            
+
             # 将numbers列表转换为num1, num2, ..., num20列
             numbers = item['numbers']
             for i, num in enumerate(numbers[:20], 1):
                 row[f'num{i}'] = num
-            
+
             # 如果号码不足20个，用0填充（通常不会发生）
             for i in range(len(numbers) + 1, 21):
                 row[f'num{i}'] = 0
-            
+
             # 添加其他字段
             if 'sum_value' in item:
                 row['sum_value'] = item['sum_value']
             else:
                 row['sum_value'] = sum(numbers)
-            
+
             if 'odd_count' in item:
                 row['odd_count'] = item['odd_count']
             else:
                 row['odd_count'] = sum(1 for n in numbers if n % 2 == 1)
-            
+
             if 'big_count' in item:
                 row['big_count'] = item['big_count']
             else:
                 row['big_count'] = sum(1 for n in numbers if n >= 41)
-            
+
             data_list.append(row)
-        
+
         df = pd.DataFrame(data_list)
         # 确保按期号排序（最新的在前面，符合原始系统的期望）
         df = df.sort_values('issue', ascending=False).reset_index(drop=True)
-        
+
         return df
-    
+
     def convert_original_result(self, predicted_numbers: List[int], confidence_scores: List[float], algorithm: str) -> Dict[str, Any]:
-        """将原始算法结果转换为我们的API格式"""
-        
-        # 计算综合置信度
+        """将原始算法排序结果转换为API格式。
+
+        历史字段名仍保留 confidence_score 以兼容前端和数据库，但这里的值表示
+        算法输出的平均排序质量分，不代表下一期真实命中概率。
+        """
+
+        # 计算综合排序质量分
         if confidence_scores:
             overall_confidence = float(np.mean(confidence_scores))
         else:
             overall_confidence = 0.5
-        
-        # 确保置信度在合理范围内
+
+        # 确保质量分在合理展示范围内
         overall_confidence = max(0.1, min(0.99, overall_confidence))
-        
+
         return {
             "predicted_numbers": predicted_numbers,
             "confidence_score": overall_confidence,
             "analysis_data": {
                 "algorithm": algorithm,
                 "engine": "original_happy8",
+                "score_semantics": "ranking_quality_score_not_hit_probability",
                 "predictor_scores": dict(zip(predicted_numbers, confidence_scores)) if confidence_scores else {},
                 "total_candidates": len(predicted_numbers),
                 "confidence_distribution": {
@@ -134,29 +139,29 @@ class Happy8AlgorithmAdapter:
                 }
             }
         }
-    
+
     async def execute_original_algorithm(
-        self, 
-        algorithm: str, 
-        historical_data: List[Dict[str, Any]], 
-        count: int, 
+        self,
+        algorithm: str,
+        historical_data: List[Dict[str, Any]],
+        count: int,
         params: Dict[str, Any]
     ) -> Dict[str, Any]:
         """执行原始Happy8算法"""
-        
+
         if not self.original_analyzer:
             raise RuntimeError(f"原始Happy8分析器不可用，无法执行算法: {algorithm}")
-        
+
         # 转换数据格式
         df = self.convert_db_to_happy8_format(historical_data)
         if df.empty:
             raise ValueError("没有可用的历史数据")
-        
+
         # 获取对应的预测器
         predictor = self.original_analyzer.prediction_engine.predictors.get(algorithm)
         if not predictor:
             raise ValueError(f"不支持的算法: {algorithm}")
-        
+
         try:
             # 执行原始算法
             predicted_numbers, confidence_scores = predictor.predict(
@@ -167,21 +172,21 @@ class Happy8AlgorithmAdapter:
 
             # 转换结果格式
             result = self.convert_original_result(predicted_numbers, confidence_scores, algorithm)
-            
+
             return result
-            
+
         except Exception as e:
             raise RuntimeError(f"算法执行失败: {e}")
-    
+
     # 为每个具体算法提供专门的接口
     async def frequency_analysis(self, historical_data: List[Dict[str, Any]], count: int, params: Dict[str, Any]) -> Dict[str, Any]:
         """频率分析 - 原始算法"""
         return await self.execute_original_algorithm("frequency", historical_data, count, params)
-    
+
     async def hot_cold_analysis(self, historical_data: List[Dict[str, Any]], count: int, params: Dict[str, Any]) -> Dict[str, Any]:
         """冷热分析 - 原始算法"""
         return await self.execute_original_algorithm("hot_cold", historical_data, count, params)
-    
+
     async def missing_analysis(self, historical_data: List[Dict[str, Any]], count: int, params: Dict[str, Any]) -> Dict[str, Any]:
         """遗漏分析 - 原始算法"""
         # 检查原始系统是否有missing算法
@@ -190,25 +195,25 @@ class Happy8AlgorithmAdapter:
         else:
             # 如果原始系统没有missing算法，使用适配器内置确定性回退实现
             return await self._create_missing_predictor(historical_data, count, params)
-    
+
     async def markov_analysis(self, historical_data: List[Dict[str, Any]], count: int, params: Dict[str, Any]) -> Dict[str, Any]:
         """马尔可夫链分析 - 原始算法"""
         # 尝试使用自适应马尔可夫，如果没有则使用普通马尔可夫
         for algo_name in ["adaptive_markov", "markov_3rd", "markov_2nd", "markov"]:
             if algo_name in self.get_all_available_algorithms():
                 return await self.execute_original_algorithm(algo_name, historical_data, count, params)
-        
+
         raise RuntimeError("没有可用的马尔可夫算法")
-    
+
     async def ml_ensemble_analysis(self, historical_data: List[Dict[str, Any]], count: int, params: Dict[str, Any]) -> Dict[str, Any]:
         """机器学习集成 - 原始算法"""
         # 尝试使用高级集成，如果没有则使用普通集成
         for algo_name in ["advanced_ensemble", "ensemble"]:
             if algo_name in self.get_all_available_algorithms():
                 return await self.execute_original_algorithm(algo_name, historical_data, count, params)
-        
+
         raise RuntimeError("没有可用的集成学习算法")
-    
+
     async def deep_learning_analysis(self, historical_data: List[Dict[str, Any]], count: int, params: Dict[str, Any]) -> Dict[str, Any]:
         """深度学习分析 - 原始算法"""
         # 尝试使用各种深度学习算法
@@ -218,31 +223,31 @@ class Happy8AlgorithmAdapter:
                     return await self.execute_original_algorithm(algo_name, historical_data, count, params)
                 except Exception as e:
                     continue
-        
+
         raise RuntimeError("没有可用的深度学习算法")
-    
+
     async def super_predictor_analysis(self, historical_data: List[Dict[str, Any]], count: int, params: Dict[str, Any]) -> Dict[str, Any]:
         """超级预测器 - 原始算法"""
         # 尝试使用超级预测器或高置信度预测器
         for algo_name in ["super_predictor", "high_confidence"]:
             if algo_name in self.get_all_available_algorithms():
                 return await self.execute_original_algorithm(algo_name, historical_data, count, params)
-        
+
         raise RuntimeError("没有可用的超级预测器算法")
-    
+
     # 其他特殊算法
     async def bayesian_analysis(self, historical_data: List[Dict[str, Any]], count: int, params: Dict[str, Any]) -> Dict[str, Any]:
         """贝叶斯推理 - 原始算法"""
         return await self.execute_original_algorithm("bayesian", historical_data, count, params)
-    
+
     async def monte_carlo_analysis(self, historical_data: List[Dict[str, Any]], count: int, params: Dict[str, Any]) -> Dict[str, Any]:
         """蒙特卡洛预测 - 原始算法"""
         return await self.execute_original_algorithm("monte_carlo", historical_data, count, params)
-    
+
     async def clustering_analysis(self, historical_data: List[Dict[str, Any]], count: int, params: Dict[str, Any]) -> Dict[str, Any]:
         """聚类预测 - 原始算法"""
         return await self.execute_original_algorithm("clustering", historical_data, count, params)
-    
+
     async def _create_missing_predictor(self, historical_data: List[Dict[str, Any]], count: int, params: Dict[str, Any]) -> Dict[str, Any]:
         """执行遗漏分析的内置回退实现。"""
         df = self.convert_db_to_happy8_format(historical_data)
@@ -250,10 +255,10 @@ class Happy8AlgorithmAdapter:
             raise ValueError("没有可用的历史数据")
 
         predicted_numbers, confidence_scores = self._run_missing_fallback(df, count)
-        
+
         # 转换结果格式
         result = self.convert_original_result(predicted_numbers, confidence_scores, "missing")
-        
+
         return result
 
     def _run_missing_fallback(self, data: pd.DataFrame, count: int) -> Tuple[List[int], List[float]]:
@@ -330,7 +335,7 @@ class Happy8AlgorithmAdapter:
         missing_periods: Dict[int, int],
         avg_cycles: Dict[int, float],
     ) -> Dict[int, float]:
-        """根据当前遗漏和平均周期计算回补概率。"""
+        """根据当前遗漏和平均周期计算启发式排序分。"""
         rebound_probs = {}
 
         for num in range(1, 81):
@@ -346,7 +351,7 @@ class Happy8AlgorithmAdapter:
                 rebound_probs[num] = 0.7 + min(excess_ratio * 0.3, 0.3)
 
         return rebound_probs
-    
+
     async def get_algorithm_info(self, algorithm: str) -> Dict[str, Any]:
         """获取算法详细信息"""
         # missing支持适配器内置回退实现，即使原始引擎未注册也应视为可用
@@ -364,13 +369,13 @@ class Happy8AlgorithmAdapter:
             return {"available": False, "error": "原始分析器不可用"}
 
         available_algorithms = self.get_all_available_algorithms()
-        
+
         if algorithm not in available_algorithms:
             return {"available": False, "error": f"算法 {algorithm} 不存在"}
-        
+
         # 获取预测器实例
         predictor = self.original_analyzer.prediction_engine.predictors.get(algorithm)
-        
+
         return {
             "available": True,
             "algorithm": algorithm,
@@ -379,30 +384,30 @@ class Happy8AlgorithmAdapter:
             "complexity": self._get_algorithm_complexity(algorithm),
             "data_requirements": self._get_data_requirements(algorithm)
         }
-    
+
     def _get_algorithm_description(self, algorithm: str) -> str:
         """获取算法描述"""
         descriptions = {
             "frequency": "基于历史频率统计的预测算法",
-            "hot_cold": "基于号码冷热趋势的预测算法", 
+            "hot_cold": "基于号码冷热趋势的预测算法",
             "missing": "基于号码遗漏期数的预测算法",
-            "markov": "基于马尔可夫链状态转移的预测算法",
-            "markov_2nd": "二阶马尔可夫链预测算法",
-            "markov_3rd": "三阶马尔可夫链预测算法",
-            "adaptive_markov": "自适应马尔可夫链预测算法",
-            "transformer": "基于Transformer的深度学习预测算法",
-            "lstm": "基于LSTM的深度学习预测算法",
-            "gnn": "基于图神经网络的预测算法",
-            "monte_carlo": "蒙特卡洛模拟预测算法",
-            "clustering": "基于聚类分析的预测算法",
-            "ensemble": "集成学习预测算法",
-            "advanced_ensemble": "高级集成学习预测算法",
-            "bayesian": "贝叶斯推理预测算法",
-            "super_predictor": "超级预测器（融合多种算法）",
-            "high_confidence": "高置信度预测器"
+            "markov": "基于单号跨期状态转移的排序模型",
+            "markov_2nd": "二阶单号跨期状态转移排序模型",
+            "markov_3rd": "三阶单号跨期状态转移排序模型",
+            "adaptive_markov": "融合一至三阶跨期状态转移的排序模型",
+            "transformer": "基于时间窗口的Transformer多标签排序模型",
+            "lstm": "基于时间窗口的LSTM多标签排序模型",
+            "gnn": "基于号码共现图传播的确定性排序模型",
+            "monte_carlo": "基于1-80无放回抽样的蒙特卡洛入选排序模型",
+            "clustering": "基于KMeans历史结构相似性的排序模型",
+            "ensemble": "固定权重融合多种排序分的模型",
+            "advanced_ensemble": "使用时间后段验证集加权的多输出集成排序模型",
+            "bayesian": "基于Dirichlet后验均值的贝叶斯排序评分模型",
+            "super_predictor": "综合排序融合器",
+            "high_confidence": "质量门控预测器"
         }
         return descriptions.get(algorithm, "未知算法")
-    
+
     def _get_algorithm_complexity(self, algorithm: str) -> str:
         """获取算法复杂度"""
         complexity_map = {
@@ -425,7 +430,7 @@ class Happy8AlgorithmAdapter:
             "high_confidence": "high"
         }
         return complexity_map.get(algorithm, "unknown")
-    
+
     def _get_data_requirements(self, algorithm: str) -> Dict[str, Any]:
         """获取算法数据需求"""
         requirements = {

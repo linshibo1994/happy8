@@ -16,26 +16,26 @@ from app.services.happy8_algorithm_adapter import Happy8AlgorithmAdapter
 
 class PredictionService:
     """预测服务 - 基于原始Happy8算法"""
-    
+
     def __init__(self, db: Session, cache: CacheService):
         self.db = db
         self.cache = cache
         self.membership_service = MembershipService(db, cache)
-        
+
         # 初始化原始Happy8算法适配器
         self.algorithm_adapter = Happy8AlgorithmAdapter()
-        
+
         # 检查原始算法可用性
         if not self.algorithm_adapter.is_original_available():
             logger.error("原始Happy8算法不可用，预测功能将受限")
         else:
             available_algorithms = self.algorithm_adapter.get_all_available_algorithms()
             logger.info(f"成功加载原始Happy8算法: {available_algorithms}")
-        
+
         # 算法映射表（将我们的API算法名映射到原始算法名）
         self.algorithm_mapping = {
             "frequency": "frequency",
-            "hot_cold": "hot_cold", 
+            "hot_cold": "hot_cold",
             "missing": "missing",  # 如果原始没有，适配器会创建
             "markov": "adaptive_markov",  # 优先使用自适应马尔可夫
             "ml_ensemble": "advanced_ensemble",  # 优先使用高级集成
@@ -43,7 +43,7 @@ class PredictionService:
             "super_predictor": "super_predictor",
             # 扩展算法
             "markov_basic": "markov",
-            "markov_2nd": "markov_2nd", 
+            "markov_2nd": "markov_2nd",
             "markov_3rd": "markov_3rd",
             "adaptive_markov": "adaptive_markov",
             "lstm": "lstm",
@@ -57,7 +57,7 @@ class PredictionService:
             "advanced_ensemble": "advanced_ensemble",
             "high_confidence": "high_confidence"
         }
-        
+
         # 算法显示名称
         self.algorithm_display_names = {
             "frequency": "频率分析",
@@ -66,7 +66,7 @@ class PredictionService:
             "markov": "自适应马尔可夫链",
             "ml_ensemble": "高级机器学习集成",
             "deep_learning": "Transformer深度学习",
-            "super_predictor": "超级预测器",
+            "super_predictor": "综合排序融合器",
             "markov_basic": "基础马尔可夫链",
             "markov_2nd": "二阶马尔可夫链",
             "markov_3rd": "三阶马尔可夫链",
@@ -80,10 +80,10 @@ class PredictionService:
             "ensemble_basic": "基础集成学习",
             "ensemble": "基础集成学习",
             "advanced_ensemble": "高级机器学习集成",
-            "high_confidence": "高置信度预测器"
+            "high_confidence": "质量门控预测器"
         }
         self._ensure_algorithm_configs()
-    
+
     async def get_available_algorithms(self, user_id: int) -> List[Dict[str, Any]]:
         """获取用户可用的算法列表"""
         try:
@@ -91,31 +91,31 @@ class PredictionService:
             algorithms = self.db.query(AlgorithmConfig).filter(
                 AlgorithmConfig.is_active == True
             ).order_by(AlgorithmConfig.sort_order).all()
-            
+
             # 检查用户权限
             available_algorithms = []
             original_algorithms = self.algorithm_adapter.get_all_available_algorithms()
-            
+
             for algo in algorithms:
                 # 检查原始算法是否真的可用
                 mapped_algo = self.algorithm_mapping.get(algo.algorithm_name)
                 is_algorithm_available = (
-                    mapped_algo in original_algorithms or 
+                    mapped_algo in original_algorithms or
                     algo.algorithm_name == "missing"  # missing有特殊处理
                 )
-                
+
                 if not is_algorithm_available:
                     logger.warning(f"算法 {algo.algorithm_name} 在原始系统中不可用")
                     continue
-                
+
                 # 检查用户权限
                 has_permission = await self.membership_service.check_permission(
                     user_id, algo.required_level
                 )
-                
+
                 # 获取算法详细信息
                 algorithm_info = await self.algorithm_adapter.get_algorithm_info(mapped_algo)
-                
+
                 algorithm_data = {
                     "id": algo.id,
                     "algorithm_name": algo.algorithm_name,
@@ -133,9 +133,9 @@ class PredictionService:
                     "data_requirements": algorithm_info.get("data_requirements", {})
                 }
                 available_algorithms.append(algorithm_data)
-            
+
             return available_algorithms
-            
+
         except Exception as e:
             logger.error(f"获取可用算法失败: {e}")
             raise BusinessException.data_not_found("获取算法列表失败")
@@ -196,7 +196,7 @@ class PredictionService:
         except Exception as exc:
             self.db.rollback()
             logger.warning(f"自动修复算法配置失败: {exc}")
-    
+
     async def check_prediction_limit(self, user_id: int) -> bool:
         """检查用户是否可以进行预测"""
         try:
@@ -204,11 +204,11 @@ class PredictionService:
             membership = await self.membership_service.get_user_membership(user_id)
             if not membership:
                 return False
-            
+
             # 检查会员是否有效
             if not await self.membership_service.check_membership_validity(user_id):
                 return False
-            
+
             # 检查日预测次数限制
             if membership.level == MembershipLevel.FREE:
                 return membership.predictions_today < 5
@@ -216,11 +216,11 @@ class PredictionService:
                 return membership.predictions_today < 50
             else:  # PREMIUM
                 return True  # 无限制
-                
+
         except Exception as e:
             logger.error(f"检查预测限制失败: {e}")
             return False
-    
+
     async def predict_numbers(
         self,
         user_id: int,
@@ -235,34 +235,34 @@ class PredictionService:
             # 检查原始算法适配器是否可用
             if not self.algorithm_adapter.is_original_available():
                 raise BusinessException.prediction_failed("原始Happy8预测引擎不可用")
-            
+
             # 检查预测权限
             if not await self.check_prediction_limit(user_id):
                 raise BusinessException.prediction_limit_exceeded("预测次数已达上限")
-            
+
             # 验证算法是否支持
             if algorithm not in self.algorithm_mapping:
                 raise BusinessException.algorithm_not_found(f"不支持的算法: {algorithm}")
-            
+
             # 检查算法权限
             algo_config = self.db.query(AlgorithmConfig).filter(
                 AlgorithmConfig.algorithm_name == algorithm,
                 AlgorithmConfig.is_active == True
             ).first()
-            
+
             if not algo_config:
                 raise BusinessException.algorithm_not_found("算法配置不存在")
-            
+
             has_permission = await self.membership_service.check_permission(
                 user_id, algo_config.required_level
             )
             if not has_permission:
                 raise BusinessException.insufficient_permission(f"需要{algo_config.required_level}会员权限")
-            
+
             # 检查缓存
             cache_key = CacheKeyManager.prediction_key(algorithm, target_issue, periods, count)
             cached_result = await self.cache.get(cache_key)
-            
+
             if cached_result:
                 logger.debug(f"使用缓存预测结果: {algorithm}, {target_issue}")
                 enriched_result = dict(cached_result)
@@ -271,10 +271,10 @@ class PredictionService:
                     predicted_numbers=enriched_result.get("predicted_numbers", []),
                 )
                 enriched_result.update(comparison_data)
-                
+
                 # 更新用户预测次数
                 await self.membership_service.update_daily_prediction_count(user_id)
-                
+
                 # 记录预测历史（标记为缓存）
                 await self._save_prediction_history(
                     user_id=user_id,
@@ -294,9 +294,9 @@ class PredictionService:
                     is_hit=enriched_result.get("is_hit"),
                     analysis_data=enriched_result.get("analysis_data")
                 )
-                
+
                 return enriched_result
-            
+
             # 执行原始预测算法
             start_time = datetime.now()
             prediction_result = await self._execute_original_prediction(
@@ -307,7 +307,7 @@ class PredictionService:
                 params=params or {}
             )
             execution_time = (datetime.now() - start_time).total_seconds()
-            
+
             # 添加执行时间到结果中
             prediction_result["execution_time"] = execution_time
             prediction_result["target_issue"] = target_issue
@@ -319,17 +319,17 @@ class PredictionService:
                     predicted_numbers=prediction_result.get("predicted_numbers", []),
                 )
             )
-            
+
             # 缓存结果
             await self.cache.set(
-                cache_key, 
-                prediction_result, 
+                cache_key,
+                prediction_result,
                 expire=3600  # 1小时
             )
-            
+
             # 更新用户预测次数
             await self.membership_service.update_daily_prediction_count(user_id)
-            
+
             # 记录预测历史
             await self._save_prediction_history(
                 user_id=user_id,
@@ -349,19 +349,19 @@ class PredictionService:
                 is_hit=prediction_result.get("is_hit"),
                 analysis_data=prediction_result.get("analysis_data")
             )
-            
+
             # 更新算法统计
             await self._update_algorithm_stats(algo_config, execution_time)
-            
+
             logger.info(f"原始算法预测完成: 用户={user_id}, 算法={algorithm}, 期号={target_issue}")
             return prediction_result
-            
+
         except BusinessException:
             raise
         except Exception as e:
             logger.error(f"预测执行失败: {e}")
             raise BusinessException.prediction_failed(f"预测执行失败: {str(e)}")
-    
+
     async def _execute_original_prediction(
         self,
         algorithm: str,
@@ -371,20 +371,20 @@ class PredictionService:
         params: Dict[str, Any]
     ) -> Dict[str, Any]:
         """执行原始Happy8预测算法"""
-        
+
         # 获取历史数据
         historical_data = await self._get_historical_data(periods, target_issue)
-        
+
         if len(historical_data) < 10:
             raise BusinessException.insufficient_data("历史数据不足")
-        
+
         # 获取映射的原始算法名
         original_algorithm = self.algorithm_mapping.get(algorithm)
         if not original_algorithm:
             raise BusinessException.algorithm_not_found(f"无法映射算法: {algorithm}")
-        
+
         logger.info(f"执行原始算法: {algorithm} -> {original_algorithm}")
-        
+
         # 根据算法类型调用相应的适配器方法
         try:
             if algorithm == "frequency":
@@ -404,11 +404,11 @@ class PredictionService:
             else:
                 # 通用调用
                 return await self.algorithm_adapter.execute_original_algorithm(original_algorithm, historical_data, count, params)
-                
+
         except Exception as e:
             logger.error(f"原始算法 {algorithm} 执行失败: {e}")
             raise BusinessException.prediction_failed(f"算法 {algorithm} 执行失败: {str(e)}")
-    
+
     async def _get_historical_data(
         self, periods: int, target_issue: Optional[str] = None
     ) -> List[Dict[str, Any]]:
@@ -433,7 +433,7 @@ class PredictionService:
             results = query.order_by(
                 LotteryResult.issue.desc()
             ).limit(periods).all()
-            
+
             data = []
             for result in results:
                 data.append({
@@ -444,13 +444,13 @@ class PredictionService:
                     "odd_count": result.odd_count,
                     "big_count": result.big_count
                 })
-            
+
             return list(reversed(data))  # 按时间正序返回
-            
+
         except Exception as e:
             logger.error(f"获取历史数据失败: {e}")
             raise BusinessException.data_not_found("获取历史数据失败")
-    
+
     async def _save_prediction_history(
         self,
         user_id: int,
@@ -491,10 +491,10 @@ class PredictionService:
                 execution_time=execution_time,
                 created_at=datetime.now()
             )
-            
+
             self.db.add(history)
             self.db.commit()
-            
+
         except Exception as e:
             self.db.rollback()
             logger.error(f"保存预测历史失败: {e}")
@@ -538,12 +538,12 @@ class PredictionService:
             "hit_rate": hit_rate,
             "is_hit": hit_count > 0,
         }
-    
+
     async def _update_algorithm_stats(self, algo_config: AlgorithmConfig, execution_time: float):
         """更新算法统计信息"""
         try:
             algo_config.usage_count = (algo_config.usage_count or 0) + 1
-            
+
             # 更新平均执行时间
             if algo_config.avg_execution_time:
                 algo_config.avg_execution_time = (
@@ -551,14 +551,14 @@ class PredictionService:
                 ) / algo_config.usage_count
             else:
                 algo_config.avg_execution_time = execution_time
-            
+
             algo_config.updated_at = datetime.now()
             self.db.commit()
-            
+
         except Exception as e:
             self.db.rollback()
             logger.error(f"更新算法统计失败: {e}")
-    
+
     async def get_prediction_history(
         self,
         user_id: int,
@@ -571,14 +571,14 @@ class PredictionService:
             query = self.db.query(PredictionHistory).filter(
                 PredictionHistory.user_id == user_id
             )
-            
+
             if algorithm:
                 query = query.filter(PredictionHistory.algorithm == algorithm)
-            
+
             histories = query.order_by(
                 PredictionHistory.created_at.desc()
             ).offset(offset).limit(limit).all()
-            
+
             result = []
             for history in histories:
                 history_data = {
@@ -600,28 +600,28 @@ class PredictionService:
                     "algorithm_params": history.algorithm_params
                 }
                 result.append(history_data)
-            
+
             return result
-            
+
         except Exception as e:
             logger.error(f"获取预测历史失败: {e}")
             raise BusinessException.data_not_found("获取预测历史失败")
-    
+
     async def get_latest_lottery_results(self, limit: int = 10) -> List[Dict[str, Any]]:
         """获取最新开奖结果"""
         try:
             # 先从缓存获取
             cache_key = CacheKeyManager.lottery_results_key(limit)
             cached_results = await self.cache.get(cache_key)
-            
+
             if cached_results:
                 return cached_results
-            
+
             # 从数据库获取
             results = self.db.query(LotteryResult).order_by(
                 LotteryResult.draw_date.desc()
             ).limit(limit).all()
-            
+
             data = []
             for result in results:
                 data.append({
@@ -636,16 +636,16 @@ class PredictionService:
                     "small_count": result.small_count,
                     "zone_distribution": result.zone_distribution
                 })
-            
+
             # 缓存结果
             await self.cache.set(cache_key, data, expire=1800)  # 30分钟
-            
+
             return data
-            
+
         except Exception as e:
             logger.error(f"获取开奖结果失败: {e}")
             raise BusinessException.data_not_found("获取开奖结果失败")
-    
+
     async def get_algorithm_diagnostics(self) -> Dict[str, Any]:
         """获取算法诊断信息"""
         try:
@@ -655,7 +655,7 @@ class PredictionService:
                 "mapped_algorithms": self.algorithm_mapping,
                 "algorithm_status": {}
             }
-            
+
             # 检查每个算法的状态
             for api_algo, original_algo in self.algorithm_mapping.items():
                 try:
@@ -673,9 +673,9 @@ class PredictionService:
                         "available": False,
                         "error": str(e)
                     }
-            
+
             return diagnostics
-            
+
         except Exception as e:
             logger.error(f"获取算法诊断信息失败: {e}")
             return {"error": str(e)}

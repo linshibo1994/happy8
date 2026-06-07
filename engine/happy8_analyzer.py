@@ -38,7 +38,7 @@ from bs4 import BeautifulSoup
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
-from sklearn.model_selection import train_test_split, cross_val_score
+from sklearn.model_selection import cross_val_score
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
@@ -53,6 +53,7 @@ from scipy.spatial.distance import pdist, squareform
 NUMBER_RANGE = range(1, 81)
 DRAW_NUMBER_COUNT = 20
 TOTAL_PAIR_TYPES = 80 * 79 // 2
+THEORETICAL_SINGLE_PROBABILITY = DRAW_NUMBER_COUNT / 80
 THEORETICAL_PAIR_PROBABILITY = (DRAW_NUMBER_COUNT / 80) * ((DRAW_NUMBER_COUNT - 1) / 79)
 NUMBER_COLUMNS = [f'num{i}' for i in range(1, DRAW_NUMBER_COUNT + 1)]
 ALL_NUMBER_PAIRS = [
@@ -74,7 +75,7 @@ try:
     from tensorflow.keras.models import Sequential
     from tensorflow.keras.layers import LSTM, Dense, Dropout, Embedding, MultiHeadAttention
     TF_AVAILABLE = True
-    
+
     # GPU配置
     gpus = tf.config.experimental.list_physical_devices('GPU')
     if gpus:
@@ -86,7 +87,7 @@ try:
             print(f"GPU配置失败: {e}")
     else:
         print("未检测到GPU设备，使用CPU计算")
-        
+
 except ImportError:
     TF_AVAILABLE = False
     print("TensorFlow未安装，深度学习功能将不可用")
@@ -112,7 +113,7 @@ class Happy8Result:
     date: str                     # 开奖日期 (如: "2025-08-13")
     time: str                     # 开奖时间 (如: "09:05:00")
     numbers: List[int]            # 开奖号码 (20个数字)
-    
+
     def __post_init__(self):
         """数据验证"""
         if len(self.numbers) != 20:
@@ -121,32 +122,32 @@ class Happy8Result:
             raise ValueError("开奖号码必须在1-80范围内")
         if len(set(self.numbers)) != 20:
             raise ValueError("开奖号码不能重复")
-    
+
     @property
     def number_sum(self) -> int:
         """号码总和"""
         return sum(self.numbers)
-    
+
     @property
     def number_avg(self) -> float:
         """号码平均值"""
         return self.number_sum / 20
-    
+
     @property
     def number_range(self) -> int:
         """号码跨度"""
         return max(self.numbers) - min(self.numbers)
-    
+
     @property
     def odd_count(self) -> int:
         """奇数个数"""
         return sum(1 for n in self.numbers if n % 2 == 1)
-    
+
     @property
     def big_count(self) -> int:
         """大号个数 (41-80)"""
         return sum(1 for n in self.numbers if n >= 41)
-    
+
     @property
     def zone_distribution(self) -> List[int]:
         """区域分布 (1-80分为8个区域)"""
@@ -155,7 +156,7 @@ class Happy8Result:
             zone_idx = (num - 1) // 10
             zones[zone_idx] += 1
         return zones
-    
+
     @property
     def consecutive_count(self) -> int:
         """连号个数"""
@@ -178,13 +179,13 @@ class PredictionResult:
     generation_time: datetime     # 生成时间
     execution_time: float         # 执行耗时
     parameters: Dict[str, Any]    # 算法参数
-    
+
     @property
     def top_numbers(self) -> List[int]:
         """按置信度排序的前20个号码"""
         if len(self.confidence_scores) != len(self.predicted_numbers):
             return self.predicted_numbers[:20]
-        
+
         paired = list(zip(self.predicted_numbers, self.confidence_scores))
         sorted_pairs = sorted(paired, key=lambda x: x[1], reverse=True)
         return [num for num, _ in sorted_pairs[:20]]
@@ -203,7 +204,7 @@ class ComparisonResult:
     hit_rate: float             # 命中率
     hit_distribution: Dict[str, int]  # 命中分布分析
     comparison_time: datetime    # 对比时间
-    
+
     def generate_report(self) -> str:
         """生成对比报告"""
         return f"""
@@ -231,7 +232,7 @@ class PairFrequencyItem:
     pair: Tuple[int, int]         # 数字对 (如: (5, 15))
     count: int                    # 出现次数
     percentage: float             # 出现百分比
-    
+
     def __post_init__(self):
         """数据验证"""
         if not isinstance(self.pair, tuple) or len(self.pair) != 2:
@@ -244,11 +245,11 @@ class PairFrequencyItem:
             raise ValueError("出现次数不能为负数")
         if not 0 <= self.percentage <= 100:
             raise ValueError("百分比必须在0-100范围内")
-    
+
     def __str__(self) -> str:
         """字符串表示"""
-        return f"({self.pair[0]:02d}, {self.pair[1]:02d}) - 出现 {self.count} 次 - 概率 {self.percentage:.1f}%"
-    
+        return f"({self.pair[0]:02d}, {self.pair[1]:02d}) - 出现 {self.count} 次 - 出现率 {self.percentage:.1f}%"
+
     def __repr__(self) -> str:
         """调试表示"""
         return f"PairFrequencyItem(pair={self.pair}, count={self.count}, percentage={self.percentage:.1f})"
@@ -270,7 +271,7 @@ class PairFrequencyResult:
     skipped_periods: int = 0              # 因数据无效跳过的行数
     total_pair_types: int = TOTAL_PAIR_TYPES  # 快乐8理论数字对类型数 C(80,2)
     theoretical_pair_probability: float = THEORETICAL_PAIR_PROBABILITY * 100
-    
+
     def __post_init__(self):
         """数据验证"""
         if self.requested_periods <= 0:
@@ -294,7 +295,7 @@ class PairFrequencyResult:
     def skipped_invalid_rows(self) -> int:
         """因数据无效被跳过的行数。"""
         return self.skipped_periods
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典格式"""
         return {
@@ -321,7 +322,7 @@ class PairFrequencyResult:
                 for item in self.frequency_items
             ]
         }
-    
+
     def to_dataframe(self) -> pd.DataFrame:
         """转换为DataFrame格式，便于导出"""
         data = []
@@ -333,9 +334,9 @@ class PairFrequencyResult:
                 '出现次数': item.count,
                 '出现频率(%)': round(item.percentage, 2)
             })
-        
+
         df = pd.DataFrame(data)
-        
+
         # 添加元数据作为DataFrame属性
         df.attrs = {
             'target_issue': self.target_issue,
@@ -353,9 +354,9 @@ class PairFrequencyResult:
             'analysis_time': self.analysis_time.isoformat(),
             'execution_time': self.execution_time
         }
-        
+
         return df
-    
+
     def get_summary(self) -> Dict[str, Any]:
         """获取统计摘要"""
         if not self.frequency_items:
@@ -367,9 +368,9 @@ class PairFrequencyResult:
                 'avg_frequency': 0,
                 'top_pairs': []
             }
-        
+
         frequencies = [item.count for item in self.frequency_items]
-        
+
         return {
             'total_unique_pairs': self.total_pairs,
             'observed_pair_count': sum(1 for item in self.frequency_items if item.count > 0),
@@ -385,25 +386,25 @@ class PairFrequencyResult:
                 for item in self.frequency_items[:10]  # 前10个最高频率的数字对
             ]
         }
-    
+
     def get_top_pairs(self, n: int = 10) -> List[PairFrequencyItem]:
         """获取前N个最高频率的数字对"""
         return self.frequency_items[:min(n, len(self.frequency_items))]
-    
+
     def find_pair(self, num1: int, num2: int) -> Optional['PairFrequencyItem']:
         """查找特定数字对的频率信息"""
         # 确保数字对的顺序正确（小数在前）
         pair = (min(num1, num2), max(num1, num2))
-        
+
         for item in self.frequency_items:
             if item.pair == pair:
                 return item
         return None
-    
+
     def generate_report(self) -> str:
         """生成分析报告"""
         summary = self.get_summary()
-        
+
         report = f"""
 数字对频率分析报告
 ==================
@@ -424,32 +425,32 @@ class PairFrequencyResult:
 
 前10个高频数字对:
 """
-        
+
         for i, item in enumerate(self.get_top_pairs(10), 1):
             report += f"{i:2d}. {item}\n"
-        
+
         return report
-    
+
     def to_excel(self, filename: Optional[str] = None) -> bytes:
         """
         导出为Excel格式
-        
+
         Args:
             filename: 文件名，如果为None则返回字节数据
-            
+
         Returns:
             Excel文件的字节数据
         """
         import io
-        
+
         # 创建Excel writer
         output = io.BytesIO()
-        
+
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             # 主要数据表
             df_main = self.to_dataframe()
             df_main.to_excel(writer, sheet_name='数字对频率', index=False)
-            
+
             # 统计摘要表
             summary = self.get_summary()
             df_summary = pd.DataFrame([
@@ -467,7 +468,7 @@ class PairFrequencyResult:
                 {'项目': '执行时间', '值': f"{self.execution_time:.3f}秒"},
             ])
             df_summary.to_excel(writer, sheet_name='统计摘要', index=False)
-            
+
             # 前20名数字对
             df_top20 = pd.DataFrame([
                 {
@@ -479,28 +480,28 @@ class PairFrequencyResult:
                 for i, item in enumerate(self.get_top_pairs(20))
             ])
             df_top20.to_excel(writer, sheet_name='前20名', index=False)
-        
+
         excel_data = output.getvalue()
-        
+
         # 如果指定了文件名，保存到文件
         if filename:
             with open(filename, 'wb') as f:
                 f.write(excel_data)
-        
+
         return excel_data
-    
+
     def to_html(self, include_charts: bool = False) -> str:
         """
         导出为HTML格式
-        
+
         Args:
             include_charts: 是否包含图表
-            
+
         Returns:
             HTML字符串
         """
         summary = self.get_summary()
-        
+
         html = f"""
 <!DOCTYPE html>
 <html lang="zh-CN">
@@ -527,7 +528,7 @@ class PairFrequencyResult:
         <p><strong>分析时间:</strong> {self.analysis_time.strftime('%Y-%m-%d %H:%M:%S')}</p>
         <p><strong>执行耗时:</strong> {self.execution_time:.3f}秒</p>
     </div>
-    
+
     <div class="summary">
         <h2>📈 统计摘要</h2>
         <div class="summary-item">
@@ -546,7 +547,7 @@ class PairFrequencyResult:
             <strong>平均出现频率:</strong> {summary['avg_frequency']:.2f}次
         </div>
     </div>
-    
+
     <h2>📋 详细结果</h2>
     <table>
         <thead>
@@ -561,7 +562,7 @@ class PairFrequencyResult:
         </thead>
         <tbody>
 """
-        
+
         # 添加数据行
         for i, item in enumerate(self.frequency_items):  # 显示所有结果
             row_class = "top-pair" if i < 10 else ""
@@ -575,11 +576,11 @@ class PairFrequencyResult:
                 <td>{item.percentage:.1f}%</td>
             </tr>
 """
-        
+
         html += """
         </tbody>
     </table>
-    
+
     <div style="margin-top: 40px; padding: 20px; background-color: #f8f9fa; border-radius: 5px;">
         <p><small>报告生成时间: """ + datetime.now().strftime('%Y-%m-%d %H:%M:%S') + """</small></p>
         <p><small>快乐8智能预测系统 - 数字对频率分析模块</small></p>
@@ -587,22 +588,22 @@ class PairFrequencyResult:
 </body>
 </html>
 """
-        
+
         return html
-    
+
     def to_xml(self) -> str:
         """
         导出为XML格式
-        
+
         Returns:
             XML字符串
         """
         from xml.etree.ElementTree import Element, SubElement, tostring
         from xml.dom import minidom
-        
+
         # 创建根元素
         root = Element('PairFrequencyAnalysis')
-        
+
         # 基本信息
         info = SubElement(root, 'AnalysisInfo')
         SubElement(info, 'TargetIssue').text = self.target_issue
@@ -621,7 +622,7 @@ class PairFrequencyResult:
         SubElement(info, 'TheoreticalPairProbability').text = str(self.theoretical_pair_probability)
         SubElement(info, 'AnalysisTime').text = self.analysis_time.isoformat()
         SubElement(info, 'ExecutionTime').text = str(self.execution_time)
-        
+
         # 统计摘要
         summary = self.get_summary()
         summary_elem = SubElement(root, 'Summary')
@@ -630,7 +631,7 @@ class PairFrequencyResult:
         SubElement(summary_elem, 'MaxFrequency').text = str(summary['max_frequency'])
         SubElement(summary_elem, 'MinFrequency').text = str(summary['min_frequency'])
         SubElement(summary_elem, 'AvgFrequency').text = str(summary['avg_frequency'])
-        
+
         # 频率项
         items_elem = SubElement(root, 'FrequencyItems')
         for item in self.frequency_items:
@@ -639,19 +640,20 @@ class PairFrequencyResult:
             SubElement(item_elem, 'Number2').text = str(item.pair[1])
             SubElement(item_elem, 'Count').text = str(item.count)
             SubElement(item_elem, 'Percentage').text = str(item.percentage)
-        
+
         # 格式化XML
         rough_string = tostring(root, 'utf-8')
         reparsed = minidom.parseString(rough_string)
         return reparsed.toprettyxml(indent="  ")
+
     def export_to_file(self, filepath: str, format_type: str = 'auto') -> bool:
         """
         导出到文件
-        
+
         Args:
             filepath: 文件路径
             format_type: 格式类型 ('auto', 'csv', 'excel', 'json', 'html', 'xml', 'txt')
-            
+
         Returns:
             是否成功导出
         """
@@ -670,52 +672,66 @@ class PairFrequencyResult:
                     'txt': 'txt'
                 }
                 format_type = format_map.get(ext, 'csv')
-            
+
             # 根据格式导出
             if format_type == 'csv':
                 df = self.to_dataframe()
                 df.to_csv(filepath, index=False, encoding='utf-8-sig')
-            
+
             elif format_type == 'excel':
                 excel_data = self.to_excel()
                 with open(filepath, 'wb') as f:
                     f.write(excel_data)
-            
+
             elif format_type == 'json':
                 import json
                 data = self.to_dict()
                 with open(filepath, 'w', encoding='utf-8') as f:
                     json.dump(data, f, ensure_ascii=False, indent=2)
-            
+
             elif format_type == 'html':
                 html_content = self.to_html()
                 with open(filepath, 'w', encoding='utf-8') as f:
                     f.write(html_content)
-            
+
             elif format_type == 'xml':
                 xml_content = self.to_xml()
                 with open(filepath, 'w', encoding='utf-8') as f:
                     f.write(xml_content)
-            
+
             elif format_type == 'txt':
                 report = self.generate_report()
                 with open(filepath, 'w', encoding='utf-8') as f:
                     f.write(report)
-            
+
             else:
                 raise ValueError(f"不支持的格式: {format_type}")
-            
+
             return True
-            
+
         except Exception as e:
             print(f"导出失败: {str(e)}")
             return False
 
 
 # 数字对分析工具函数
+def get_number_columns() -> List[str]:
+    """获取快乐8号码列名。"""
+    return NUMBER_COLUMNS.copy()
+
+
 def extract_row_numbers(row: pd.Series) -> List[int]:
     """从DataFrame行中提取20个开奖号码。"""
     return [int(row[f'num{i}']) for i in range(1, DRAW_NUMBER_COUNT + 1)]
+
+
+def validate_numbers_for_draw(numbers: List[int]) -> bool:
+    """验证一期开奖结果是否符合快乐8规则。"""
+    return (
+        len(numbers) == DRAW_NUMBER_COUNT
+        and len(set(numbers)) == DRAW_NUMBER_COUNT
+        and all(num in NUMBER_RANGE for num in numbers)
+    )
 
 
 def generate_all_number_pairs() -> List[Tuple[int, int]]:
@@ -723,19 +739,162 @@ def generate_all_number_pairs() -> List[Tuple[int, int]]:
     return ALL_NUMBER_PAIRS.copy()
 
 
+def ensure_newest_first(data: pd.DataFrame) -> pd.DataFrame:
+    """统一返回最新期在前的数据。"""
+    if data is None or data.empty:
+        return pd.DataFrame() if data is None else data.copy()
+
+    data_sorted = data.copy()
+    if 'issue' in data_sorted.columns:
+        data_sorted['issue'] = data_sorted['issue'].astype(str)
+        data_sorted = data_sorted.sort_values('issue', ascending=False)
+
+    return data_sorted.reset_index(drop=True)
+
+
+def ensure_oldest_first(data: pd.DataFrame) -> pd.DataFrame:
+    """统一返回最旧期在前的数据，供时间序列训练使用。"""
+    if data is None or data.empty:
+        return pd.DataFrame() if data is None else data.copy()
+
+    data_sorted = data.copy()
+    if 'issue' in data_sorted.columns:
+        data_sorted['issue'] = data_sorted['issue'].astype(str)
+        data_sorted = data_sorted.sort_values('issue', ascending=True)
+
+    return data_sorted.reset_index(drop=True)
+
+
+def normalize_scores(scores: List[float]) -> List[float]:
+    """将排序分归一化到0-1；这些分数不是命中概率。"""
+    if not scores:
+        return []
+
+    max_score = max(scores)
+    min_score = min(scores)
+    if max_score <= 0:
+        return [0.0 for _ in scores]
+    if max_score == min_score:
+        return [1.0 if max_score > 0 else 0.0 for _ in scores]
+
+    return [float(score / max_score) for score in scores]
+
+
+def rank_number_scores(number_scores: Dict[int, float], count: int) -> Tuple[List[int], List[float]]:
+    """按分数排序并返回唯一号码与归一化排序分。"""
+    safe_count = max(0, min(int(count), 80))
+    if safe_count == 0:
+        return [], []
+
+    valid_scores = {
+        int(num): float(score)
+        for num, score in number_scores.items()
+        if int(num) in NUMBER_RANGE and np.isfinite(score)
+    }
+    if not valid_scores:
+        raise ValueError("没有可排序的候选号码")
+
+    sorted_items = sorted(valid_scores.items(), key=lambda item: (-item[1], item[0]))
+    selected = sorted_items[:min(safe_count, len(sorted_items))]
+    numbers = [num for num, _ in selected]
+    scores = normalize_scores([score for _, score in selected])
+    return numbers, scores
+
+
+def calculate_multilabel_jaccard_score(
+    y_true: Union[np.ndarray, List[List[float]]],
+    y_score: Union[np.ndarray, List[List[float]]],
+    top_k: int = DRAW_NUMBER_COUNT,
+) -> float:
+    """按每期top_k预测集合计算多标签Jaccard验证分。"""
+    true_array = np.asarray(y_true)
+    score_array = np.asarray(y_score)
+
+    if true_array.size == 0 or score_array.size == 0:
+        return 0.0
+    if true_array.ndim == 1:
+        true_array = true_array.reshape(1, -1)
+    if score_array.ndim == 1:
+        score_array = score_array.reshape(1, -1)
+    if true_array.shape != score_array.shape:
+        raise ValueError("Jaccard评分输入形状必须一致")
+
+    safe_top_k = min(max(int(top_k), 1), true_array.shape[1])
+    sample_scores = []
+    for true_row, score_row in zip(true_array, score_array):
+        actual = {idx for idx, value in enumerate(true_row) if value > 0}
+        if not actual:
+            sample_scores.append(0.0)
+            continue
+
+        predicted = set(
+            np.argsort(-np.asarray(score_row, dtype=float), kind='mergesort')[:safe_top_k].tolist()
+        )
+        union = actual | predicted
+        sample_scores.append(len(actual & predicted) / len(union) if union else 0.0)
+
+    return float(np.mean(sample_scores)) if sample_scores else 0.0
+
+
+def split_time_series_tail_validation(
+    X: Union[np.ndarray, List[Any]],
+    y: Union[np.ndarray, List[Any]],
+    validation_fraction: float = 0.2,
+    min_validation_size: int = 1,
+) -> Tuple[Any, Any, Any, Any]:
+    """按时间顺序把尾段样本作为验证集，避免随机切分破坏时序。"""
+    sample_count = len(X)
+    if sample_count != len(y):
+        raise ValueError("训练样本和目标样本数量不一致")
+    if sample_count < 2:
+        raise ValueError("至少需要2个时间样本才能进行尾段验证")
+
+    validation_size = max(
+        int(min_validation_size),
+        int(np.ceil(sample_count * validation_fraction)),
+    )
+    validation_size = min(validation_size, sample_count - 1)
+    split_index = sample_count - validation_size
+
+    return X[:split_index], X[split_index:], y[:split_index], y[split_index:]
+
+
+def get_prediction_training_window(data: pd.DataFrame, target_issue: str, periods: int) -> pd.DataFrame:
+    """
+    获取预测训练窗口。
+
+    - 历史目标期：只使用目标期之前的数据，避免把目标期开奖结果放进训练集。
+    - 未来目标期：使用最新的periods期历史数据。
+    """
+    if data is None or data.empty:
+        return pd.DataFrame()
+
+    newest_first = ensure_newest_first(data)
+    target_issue = str(target_issue)
+
+    if target_issue:
+        issues = newest_first['issue'].astype(str)
+        newest_first = newest_first[issues < target_issue]
+
+    if periods and periods > 0:
+        newest_first = newest_first.head(periods)
+
+    return newest_first.reset_index(drop=True)
+
+
 def extract_number_pairs(numbers: List[int]) -> List[Tuple[int, int]]:
     """
     从20个开奖号码中提取所有两位数组合
-    
+
     Args:
         numbers: 开奖号码列表，应包含20个1-80范围内的数字
-        
+
     Returns:
         所有可能的数字对组合列表，每个数字对按(小数, 大数)格式排序
-        
+
     Raises:
         ValueError: 当输入数据无效时
-        
+
     Example:
         >>> len(extract_number_pairs(list(range(1, 21))))
         190
@@ -743,19 +902,19 @@ def extract_number_pairs(numbers: List[int]) -> List[Tuple[int, int]]:
     # 输入验证
     if not isinstance(numbers, (list, tuple)):
         raise ValueError("输入必须是列表或元组")
-    
+
     if len(numbers) != 20:
         raise ValueError(f"开奖号码必须是20个，实际: {len(numbers)}")
-    
+
     if not all(isinstance(num, int) for num in numbers):
         raise ValueError("所有号码必须是整数")
-    
+
     if not all(1 <= num <= 80 for num in numbers):
         raise ValueError("所有号码必须在1-80范围内")
-    
+
     if len(set(numbers)) != 20:
         raise ValueError("开奖号码不能重复")
-    
+
     # 提取所有两位数组合
     pairs = []
     for i in range(len(numbers)):
@@ -764,22 +923,23 @@ def extract_number_pairs(numbers: List[int]) -> List[Tuple[int, int]]:
             num1, num2 = numbers[i], numbers[j]
             pair = (min(num1, num2), max(num1, num2))
             pairs.append(pair)
-    
+
     # 按数字对排序（先按第一个数字，再按第二个数字）
     pairs.sort()
-    
+
     return pairs
+
 
 def validate_issue_format(issue: str) -> bool:
     """
     验证期号格式是否正确
-    
+
     Args:
         issue: 期号字符串，格式应为YYYYNNN（如2025238）
-        
+
     Returns:
         bool: 格式是否正确
-        
+
     Example:
         >>> validate_issue_format("2025238")
         True
@@ -788,42 +948,42 @@ def validate_issue_format(issue: str) -> bool:
     """
     if not isinstance(issue, str):
         return False
-    
+
     if len(issue) != 7:
         return False
-    
+
     if not issue.isdigit():
         return False
-    
+
     year = int(issue[:4])
     period = int(issue[4:])
-    
+
     # 年份应该在合理范围内
     if not (2020 <= year <= 2030):
         return False
-    
+
     # 期数应该在合理范围内（每天最多300期左右）
     if not (1 <= period <= 999):
         return False
-    
+
     return True
 
 
 def calculate_issue_range(target_issue: str, period_count: int, available_data: Optional[pd.DataFrame] = None) -> Tuple[str, str, int]:
     """
     从目标期号向前计算指定期数的范围，基于实际可用数据
-    
+
     Args:
         target_issue: 目标期号（如"2025238"）
         period_count: 要统计的期数
         available_data: 可用的历史数据DataFrame，如果提供则基于实际数据计算
-        
+
     Returns:
         Tuple[start_issue, end_issue, actual_count]: 起始期号、结束期号、实际期数
-        
+
     Raises:
         ValueError: 当输入参数无效时
-        
+
     Example:
         >>> calculate_issue_range("2025238", 20)
         ("2025219", "2025238", 20)
@@ -831,17 +991,17 @@ def calculate_issue_range(target_issue: str, period_count: int, available_data: 
     # 输入验证
     if not validate_issue_format(target_issue):
         raise ValueError(f"无效的期号格式: {target_issue}")
-    
+
     if not isinstance(period_count, int) or period_count <= 0:
         raise ValueError(f"期数必须是正整数: {period_count}")
-    
+
     if period_count > 100:
         raise ValueError(f"期数不能超过100: {period_count}")
-    
+
     # 如果提供了实际数据，基于数据计算
     if available_data is not None and not available_data.empty:
         return _calculate_range_from_data(target_issue, period_count, available_data)
-    
+
     # 否则使用简单的数学计算
     return _calculate_range_simple(target_issue, period_count)
 
@@ -855,22 +1015,22 @@ def _calculate_range_from_data(target_issue: str, period_count: int, data: pd.Da
     data_sorted['issue'] = data_sorted['issue'].astype(str)
     data_sorted = data_sorted.sort_values('issue')
     issues = data_sorted['issue'].tolist()
-    
+
     # 检查目标期号是否存在
     if target_issue not in issues:
         raise ValueError(f"目标期号 {target_issue} 不存在于历史数据中")
-    
+
     # 找到目标期号的位置
     target_index = issues.index(target_issue)
-    
+
     # 计算起始位置
     start_index = max(0, target_index - period_count + 1)
-    
+
     # 获取实际的期号范围
     start_issue = issues[start_index]
     end_issue = target_issue
     actual_count = target_index - start_index + 1
-    
+
     return start_issue, end_issue, actual_count
 
 
@@ -881,10 +1041,10 @@ def _calculate_range_simple(target_issue: str, period_count: int) -> Tuple[str, 
     # 解析目标期号
     year = int(target_issue[:4])
     target_period = int(target_issue[4:])
-    
+
     # 计算起始期号
     start_period = target_period - (period_count - 1)
-    
+
     # 处理跨年情况（简化处理，假设每年期号连续）
     if start_period <= 0:
         # 如果起始期号小于等于0，则从第1期开始
@@ -892,29 +1052,29 @@ def _calculate_range_simple(target_issue: str, period_count: int) -> Tuple[str, 
         actual_count = target_period
     else:
         actual_count = period_count
-    
+
     # 格式化期号
     start_issue = f"{year}{start_period:03d}"
     end_issue = target_issue
-    
+
     return start_issue, end_issue, actual_count
 
 
 def get_available_issues_in_range(start_issue: str, end_issue: str, data: pd.DataFrame) -> List[str]:
     """
     获取指定范围内实际可用的期号列表
-    
+
     Args:
         start_issue: 起始期号
         end_issue: 结束期号
         data: 历史数据DataFrame
-        
+
     Returns:
         在指定范围内的期号列表，按时间顺序排序
     """
     if data.empty:
         return []
-    
+
     data_for_range = data.copy()
     data_for_range['issue'] = data_for_range['issue'].astype(str)
     mask = (
@@ -922,7 +1082,7 @@ def get_available_issues_in_range(start_issue: str, end_issue: str, data: pd.Dat
         & (data_for_range['issue'] <= str(end_issue))
     )
     filtered_data = data_for_range[mask]
-    
+
     # 按期号排序并返回期号列表
     return sorted(filtered_data['issue'].tolist())
 
@@ -935,19 +1095,18 @@ def count_pair_frequencies(
 ) -> Union[Dict[Tuple[int, int], int], Tuple[Dict[Tuple[int, int], int], int, int]]:
     """
     统计指定期号范围内数字对的出现频率
-    
+
     Args:
         data: 历史开奖数据DataFrame
         start_issue: 起始期号
         end_issue: 结束期号
-        return_metadata: 是否返回有效期数和跳过无效行数
-        
+
     Returns:
-        数字对出现频率字典；return_metadata=True时额外返回有效期数与跳过无效行数
-        
+        数字对出现频率字典，键为(num1, num2)，值为出现次数
+
     Raises:
         ValueError: 当输入数据无效时
-        
+
     Example:
         >>> data = pd.DataFrame({...})
         >>> frequencies = count_pair_frequencies(data, "2025210", "2025220")
@@ -957,12 +1116,12 @@ def count_pair_frequencies(
     # 输入验证
     if data.empty:
         return ({}, 0, 0) if return_metadata else {}
-    
+
     required_cols = ['issue'] + NUMBER_COLUMNS
     missing_cols = [col for col in required_cols if col not in data.columns]
     if missing_cols:
         raise ValueError(f"数据缺少必要列: {missing_cols}")
-    
+
     data_for_range = data.copy()
     data_for_range['issue'] = data_for_range['issue'].astype(str)
     mask = (
@@ -970,15 +1129,15 @@ def count_pair_frequencies(
         & (data_for_range['issue'] <= str(end_issue))
     )
     filtered_data = data_for_range[mask]
-    
+
     if filtered_data.empty:
         return ({}, 0, 0) if return_metadata else {}
-    
+
     # 统计数字对频率
     pair_counts = {}
     valid_periods = 0
     skipped_periods = 0
-    
+
     for _, row in filtered_data.iterrows():
         # 提取当期的20个开奖号码
         try:
@@ -986,30 +1145,30 @@ def count_pair_frequencies(
         except Exception:
             skipped_periods += 1
             continue
-        
+
         # 验证号码有效性
         if len(set(numbers)) != DRAW_NUMBER_COUNT:
             skipped_periods += 1
             continue  # 跳过有重复号码的无效数据
-        
+
         if not all(num in NUMBER_RANGE for num in numbers):
             skipped_periods += 1
             continue  # 跳过号码范围无效的数据
-        
+
         # 提取所有数字对
         try:
             pairs = extract_number_pairs(numbers)
-            
+
             # 统计每个数字对的出现次数
             for pair in pairs:
                 pair_counts[pair] = pair_counts.get(pair, 0) + 1
             valid_periods += 1
-                
+
         except ValueError:
             # 跳过无效的号码组合
             skipped_periods += 1
             continue
-    
+
     if return_metadata:
         return pair_counts, valid_periods, skipped_periods
     return pair_counts
@@ -1018,14 +1177,14 @@ def count_pair_frequencies(
 def sort_pair_frequencies(pair_counts: Dict[Tuple[int, int], int], total_periods: int) -> List[PairFrequencyItem]:
     """
     对数字对频率进行排序并转换为PairFrequencyItem列表
-    
+
     Args:
         pair_counts: 数字对出现次数字典
         total_periods: 总期数，用于计算百分比
-        
+
     Returns:
         按出现频率从高到低排序的PairFrequencyItem列表
-        
+
     Example:
         >>> pair_counts = {(5, 15): 12, (4, 18): 10}
         >>> items = sort_pair_frequencies(pair_counts, 20)
@@ -1037,7 +1196,7 @@ def sort_pair_frequencies(pair_counts: Dict[Tuple[int, int], int], total_periods
             PairFrequencyItem(pair=pair, count=0, percentage=0.0)
             for pair in generate_all_number_pairs()
         ]
-    
+
     # 转换为PairFrequencyItem列表，未出现的数字对也保留为0频次，保证3160全量口径。
     frequency_items = []
     for pair in generate_all_number_pairs():
@@ -1049,47 +1208,47 @@ def sort_pair_frequencies(pair_counts: Dict[Tuple[int, int], int], total_periods
             percentage=percentage
         )
         frequency_items.append(item)
-    
+
     # 按出现次数降序排序，次数相同时按数字对升序排序
     frequency_items.sort(key=lambda x: (-x.count, x.pair))
-    
+
     return frequency_items
 
 
 def analyze_pair_frequency_core(data: pd.DataFrame, target_issue: str, period_count: int) -> PairFrequencyResult:
     """
     数字对频率分析的核心算法
-    
+
     Args:
         data: 历史开奖数据DataFrame
         target_issue: 目标期号
         period_count: 统计期数
-        
+
     Returns:
         完整的分析结果
-        
+
     Raises:
         ValueError: 当输入参数无效时
     """
     start_time = datetime.now()
-    
+
     try:
         # 计算期号范围
         start_issue, end_issue, actual_periods = calculate_issue_range(
             target_issue, period_count, data
         )
-        
+
         # 统计数字对频率
         pair_counts, valid_periods, skipped_periods = count_pair_frequencies(
             data, start_issue, end_issue, return_metadata=True
         )
-        
+
         # 排序和格式化结果
         frequency_items = sort_pair_frequencies(pair_counts, valid_periods)
-        
+
         # 计算执行时间
         execution_time = (datetime.now() - start_time).total_seconds()
-        
+
         # 创建结果对象
         result = PairFrequencyResult(
             target_issue=target_issue,
@@ -1104,9 +1263,9 @@ def analyze_pair_frequency_core(data: pd.DataFrame, target_issue: str, period_co
             valid_periods=valid_periods,
             skipped_periods=skipped_periods
         )
-        
+
         return result
-        
+
     except Exception as e:
         execution_time = (datetime.now() - start_time).total_seconds()
         raise ValueError(f"分析过程中发生错误: {str(e)}，执行时间: {execution_time:.3f}秒")
@@ -1114,7 +1273,7 @@ def analyze_pair_frequency_core(data: pd.DataFrame, target_issue: str, period_co
 
 class DataValidator:
     """数据验证器"""
-    
+
     @staticmethod
     def validate_happy8_data(data: pd.DataFrame) -> Dict[str, Any]:
         """验证快乐8数据"""
@@ -1126,35 +1285,35 @@ class DataValidator:
             'invalid_number_counts': 0,
             'errors': []
         }
-        
+
         # 检查必要列（移除time列）
         required_cols = ['issue', 'date'] + [f'num{i}' for i in range(1, 21)]
         missing_cols = [col for col in required_cols if col not in data.columns]
         if missing_cols:
             results['errors'].append(f"缺少必要列: {missing_cols}")
             return results
-        
+
         # 检查缺失值
         for col in required_cols:
             missing_count = data[col].isnull().sum()
             if missing_count > 0:
                 results['missing_values'][col] = missing_count
-        
+
         # 检查号码范围
         number_cols = [f'num{i}' for i in range(1, 21)]
         for col in number_cols:
             invalid_range = ((data[col] < 1) | (data[col] > 80)).sum()
             results['invalid_ranges'] += invalid_range
-        
+
         # 检查重复期号
         results['duplicate_issues'] = data['issue'].duplicated().sum()
-        
+
         # 检查每期号码数量
         for idx, row in data.iterrows():
             numbers = [row[f'num{i}'] for i in range(1, 21)]
             if len(set(numbers)) != 20:
                 results['invalid_number_counts'] += 1
-        
+
         return results
 
 
@@ -1162,11 +1321,11 @@ class ResultCache:
     """
     结果缓存管理器 - 支持LRU策略和缓存统计
     """
-    
+
     def __init__(self, max_size: int = 100):
         """
         初始化缓存管理器
-        
+
         Args:
             max_size: 最大缓存条目数
         """
@@ -1176,14 +1335,14 @@ class ResultCache:
         self.hit_count = 0  # 缓存命中次数
         self.miss_count = 0  # 缓存未命中次数
         self.creation_time = datetime.now()
-    
+
     def get(self, key: str) -> Optional[PairFrequencyResult]:
         """
         获取缓存结果
-        
+
         Args:
             key: 缓存键
-            
+
         Returns:
             缓存的结果，如果不存在则返回None
         """
@@ -1196,11 +1355,11 @@ class ResultCache:
         else:
             self.miss_count += 1
             return None
-    
+
     def set(self, key: str, result: PairFrequencyResult):
         """
         设置缓存结果
-        
+
         Args:
             key: 缓存键
             result: 分析结果
@@ -1212,23 +1371,23 @@ class ResultCache:
         elif len(self.cache) >= self.max_size:
             oldest_key = self.access_order.pop(0)
             del self.cache[oldest_key]
-        
+
         # 添加新条目
         self.cache[key] = result
         self.access_order.append(key)
-    
+
     def clear(self):
         """清空缓存"""
         self.cache.clear()
         self.access_order.clear()
         self.hit_count = 0
         self.miss_count = 0
-    
+
     def get_stats(self) -> Dict[str, Any]:
         """获取缓存统计信息"""
         total_requests = self.hit_count + self.miss_count
         hit_rate = (self.hit_count / total_requests * 100) if total_requests > 0 else 0
-        
+
         return {
             'cache_size': len(self.cache),
             'max_size': self.max_size,
@@ -1240,14 +1399,14 @@ class ResultCache:
             'creation_time': self.creation_time.isoformat(),
             'uptime_seconds': (datetime.now() - self.creation_time).total_seconds()
         }
-    
+
     def remove(self, key: str) -> bool:
         """
         删除指定的缓存条目
-        
+
         Args:
             key: 缓存键
-            
+
         Returns:
             是否成功删除
         """
@@ -1256,16 +1415,16 @@ class ResultCache:
             self.access_order.remove(key)
             return True
         return False
-    
+
     def resize(self, new_max_size: int):
         """
         调整缓存大小
-        
+
         Args:
             new_max_size: 新的最大缓存大小
         """
         self.max_size = new_max_size
-        
+
         # 如果新大小小于当前缓存数量，删除最久未使用的条目
         while len(self.cache) > self.max_size:
             oldest_key = self.access_order.pop(0)
@@ -1276,7 +1435,7 @@ class PairAnalysisPerformanceMonitor:
     """
     性能监控器 - 专门用于数字对频率分析
     """
-    
+
     def __init__(self):
         """初始化性能监控器"""
         self.metrics = {
@@ -1292,11 +1451,11 @@ class PairAnalysisPerformanceMonitor:
         }
         self.analysis_history = []  # 保存最近100次分析的详细信息
         self.max_history = 100
-    
+
     def record_analysis(self, execution_time: float, cache_hit: bool, data_size: int, result_size: int):
         """
         记录一次分析的性能数据
-        
+
         Args:
             execution_time: 执行时间（秒）
             cache_hit: 是否命中缓存
@@ -1306,12 +1465,12 @@ class PairAnalysisPerformanceMonitor:
         # 更新基本指标
         self.metrics['total_analyses'] += 1
         self.metrics['total_execution_time'] += execution_time
-        
+
         if cache_hit:
             self.metrics['cache_hits'] += 1
         else:
             self.metrics['cache_misses'] += 1
-        
+
         # 更新执行时间统计
         self.metrics['avg_execution_time'] = (
             self.metrics['total_execution_time'] / self.metrics['total_analyses']
@@ -1322,7 +1481,7 @@ class PairAnalysisPerformanceMonitor:
         self.metrics['min_execution_time'] = min(
             self.metrics['min_execution_time'], execution_time
         )
-        
+
         # 记录详细历史
         analysis_record = {
             'timestamp': datetime.now(),
@@ -1331,16 +1490,16 @@ class PairAnalysisPerformanceMonitor:
             'data_size': data_size,
             'result_size': result_size
         }
-        
+
         self.analysis_history.append(analysis_record)
-        
+
         # 保持历史记录在限制范围内
         if len(self.analysis_history) > self.max_history:
             self.analysis_history.pop(0)
-        
+
         # 更新内存使用情况
         self._update_memory_usage()
-    
+
     def _update_memory_usage(self):
         """更新内存使用情况"""
         try:
@@ -1351,15 +1510,15 @@ class PairAnalysisPerformanceMonitor:
             # 如果没有psutil，使用简单的估算
             import sys
             self.metrics['memory_usage_mb'] = sys.getsizeof(self.analysis_history) / 1024 / 1024
-    
+
     def get_performance_report(self) -> Dict[str, Any]:
         """获取性能报告"""
         cache_hit_rate = 0.0
         if self.metrics['total_analyses'] > 0:
             cache_hit_rate = (self.metrics['cache_hits'] / self.metrics['total_analyses']) * 100
-        
+
         uptime = (datetime.now() - self.metrics['start_time']).total_seconds()
-        
+
         return {
             'total_analyses': self.metrics['total_analyses'],
             'total_execution_time': round(self.metrics['total_execution_time'], 3),
@@ -1373,11 +1532,11 @@ class PairAnalysisPerformanceMonitor:
             'uptime_seconds': round(uptime, 1),
             'analyses_per_minute': round((self.metrics['total_analyses'] / uptime * 60), 2) if uptime > 0 else 0.0
         }
-    
+
     def get_recent_performance_trend(self, last_n: int = 20) -> List[Dict[str, Any]]:
         """获取最近N次分析的性能趋势"""
         recent_history = self.analysis_history[-last_n:] if len(self.analysis_history) >= last_n else self.analysis_history
-        
+
         return [
             {
                 'timestamp': record['timestamp'].isoformat(),
@@ -1388,7 +1547,7 @@ class PairAnalysisPerformanceMonitor:
             }
             for record in recent_history
         ]
-    
+
     def reset_metrics(self):
         """重置性能指标"""
         self.__init__()
@@ -1397,7 +1556,7 @@ class PairAnalysisPerformanceMonitor:
 class PairFrequencyAnalyzer:
     """
     数字对频率分析器
-    
+
     提供完整的数字对频率分析功能，包括：
     - 数字对提取和统计
     - 期号范围计算
@@ -1405,11 +1564,11 @@ class PairFrequencyAnalyzer:
     - 结果缓存和性能优化
     - 性能监控和优化
     """
-    
+
     def __init__(self, data_manager=None, cache_size: int = 100, enable_parallel: bool = True):
         """
         初始化分析器
-        
+
         Args:
             data_manager: 数据管理器实例，如果为None则创建新实例
             cache_size: 缓存大小
@@ -1421,7 +1580,7 @@ class PairFrequencyAnalyzer:
         self.enable_parallel = enable_parallel
         self.max_workers = min(4, os.cpu_count() or 1)  # 最大工作线程数
         self.logger = self._setup_logger()
-    
+
     def _setup_logger(self):
         """设置日志记录器"""
         import logging
@@ -1435,27 +1594,27 @@ class PairFrequencyAnalyzer:
             logger.addHandler(handler)
             logger.setLevel(logging.INFO)
         return logger
-    
+
     def analyze_pair_frequency(
-        self, 
-        target_issue: str, 
+        self,
+        target_issue: str,
         period_count: int,
         use_cache: bool = True
     ) -> PairFrequencyResult:
         """
         分析数字对频率的主要方法
-        
+
         Args:
             target_issue: 目标期号（如"2025238"）
             period_count: 统计期数
             use_cache: 是否使用缓存
-            
+
         Returns:
             完整的分析结果
-            
+
         Raises:
             ValueError: 当输入参数无效时
-            
+
         Example:
             >>> analyzer = PairFrequencyAnalyzer()
             >>> result = analyzer.analyze_pair_frequency("2025238", 20)
@@ -1463,15 +1622,16 @@ class PairFrequencyAnalyzer:
         """
         # 输入验证
         self._validate_inputs(target_issue, period_count)
-        
+
         # 记录分析开始
         self.logger.info(f"开始分析数字对频率: 期号={target_issue}, 期数={period_count}")
-        
+
         try:
             # 获取历史数据
             data = self._get_historical_data()
             data_size = len(data) if not data.empty else 0
             cache_key = self._get_cache_key(target_issue, period_count, data)
+            cached_result = None
 
             if use_cache:
                 cached_result = self.cache.get(cache_key)
@@ -1484,17 +1644,17 @@ class PairFrequencyAnalyzer:
                         result_size=len(cached_result.frequency_items)
                     )
                     return cached_result
-            
+
             # 执行核心分析（可能使用并行处理）
             if self.enable_parallel and data_size > 50:
                 result = self._analyze_with_parallel_processing(data, target_issue, period_count)
             else:
                 result = analyze_pair_frequency_core(data, target_issue, period_count)
-            
+
             # 缓存结果
             if use_cache:
                 self.cache.set(cache_key, result)
-            
+
             # 记录性能数据
             result_size = len(result.frequency_items)
             self.performance_monitor.record_analysis(
@@ -1503,30 +1663,31 @@ class PairFrequencyAnalyzer:
                 data_size=data_size,
                 result_size=result_size
             )
-            
+
             # 记录分析完成
             self.logger.info(
                 f"分析完成: 实际期数={result.actual_periods}, "
                 f"数字对总数={result.total_pairs}, "
                 f"执行时间={result.execution_time:.3f}秒"
             )
-            
+
             return result
-            
+
         except Exception as e:
             self.logger.error(f"分析过程中发生错误: {str(e)}")
             raise
+
     def _validate_inputs(self, target_issue: str, period_count: int):
         """验证输入参数"""
         if not validate_issue_format(target_issue):
             raise ValueError(f"无效的期号格式: {target_issue}")
-        
+
         if not isinstance(period_count, int) or period_count <= 0:
             raise ValueError(f"期数必须是正整数: {period_count}")
-        
+
         if period_count > 100:
             raise ValueError(f"期数不能超过100: {period_count}")
-    
+
     def _get_historical_data(self) -> pd.DataFrame:
         """获取历史数据"""
         if self.data_manager is not None:
@@ -1542,7 +1703,7 @@ class PairFrequencyAnalyzer:
                     raise FileNotFoundError(f"数据文件不存在: {data_path}")
             except Exception as e:
                 raise ValueError(f"无法读取历史数据: {str(e)}")
-    
+
     def _get_cache_key(
         self,
         target_issue: str,
@@ -1550,9 +1711,10 @@ class PairFrequencyAnalyzer:
         data: Optional[pd.DataFrame] = None
     ) -> str:
         """生成缓存键，包含数据内容指纹以规避历史数据变更后的陈旧缓存。"""
+        if data is None:
+            data = self._get_historical_data()
+
         try:
-            if data is None:
-                data = self._get_historical_data()
             start_issue, end_issue, _ = calculate_issue_range(target_issue, period_count, data)
             data_signature = self._build_data_fingerprint(data, start_issue, end_issue)
             return (
@@ -1560,8 +1722,6 @@ class PairFrequencyAnalyzer:
                 f"{start_issue}:{end_issue}:{data_signature}"
             )
         except Exception:
-            if data is None:
-                return f"pair_frequency:{target_issue}:{period_count}:unavailable"
             data_signature = self._build_data_fingerprint(data)
             return f"pair_frequency:{target_issue}:{period_count}:{data_signature}"
 
@@ -1596,23 +1756,24 @@ class PairFrequencyAnalyzer:
             force_ascii=True
         )
         return hashlib.sha256(payload.encode('utf-8')).hexdigest()[:16]
+
     def clear_cache(self):
         """清空缓存"""
         self.cache.clear()
         self.logger.info("缓存已清空")
-    
+
     def get_cache_info(self) -> Dict[str, Any]:
         """获取缓存信息"""
         return self.cache.get_stats()
-    
+
     def remove_cache_item(self, target_issue: str, period_count: int) -> bool:
         """
         删除指定的缓存项
-        
+
         Args:
             target_issue: 目标期号
             period_count: 期数
-            
+
         Returns:
             是否成功删除
         """
@@ -1621,46 +1782,46 @@ class PairFrequencyAnalyzer:
         if success:
             self.logger.info(f"删除缓存项: {cache_key}")
         return success
-    
+
     def resize_cache(self, new_size: int):
         """
         调整缓存大小
-        
+
         Args:
             new_size: 新的缓存大小
         """
         old_size = self.cache.max_size
         self.cache.resize(new_size)
         self.logger.info(f"缓存大小已调整: {old_size} -> {new_size}")
-    
+
     def get_cache_hit_rate(self) -> float:
         """获取缓存命中率"""
         stats = self.cache.get_stats()
         return stats['hit_rate']
-    
+
     def _analyze_with_parallel_processing(self, data: pd.DataFrame, target_issue: str, period_count: int) -> PairFrequencyResult:
         """
         使用并行处理进行分析（适用于大数据集）
-        
+
         Args:
             data: 历史数据
             target_issue: 目标期号
             period_count: 统计期数
-            
+
         Returns:
             分析结果
         """
         from concurrent.futures import ThreadPoolExecutor
         import numpy as np
-        
+
         start_time = datetime.now()
-        
+
         try:
             # 计算期号范围
             start_issue, end_issue, actual_periods = calculate_issue_range(
                 target_issue, period_count, data
             )
-            
+
             data_for_range = data.copy()
             data_for_range['issue'] = data_for_range['issue'].astype(str)
             mask = (
@@ -1668,7 +1829,7 @@ class PairFrequencyAnalyzer:
                 & (data_for_range['issue'] <= str(end_issue))
             )
             filtered_data = data_for_range[mask]
-            
+
             if filtered_data.empty:
                 # 返回空结果
                 return PairFrequencyResult(
@@ -1684,24 +1845,24 @@ class PairFrequencyAnalyzer:
                     valid_periods=0,
                     skipped_periods=0
                 )
-            
+
             # 将数据分块进行并行处理
             chunk_size = max(1, len(filtered_data) // self.max_workers)
             data_chunks = [
-                filtered_data.iloc[i:i + chunk_size] 
+                filtered_data.iloc[i:i + chunk_size]
                 for i in range(0, len(filtered_data), chunk_size)
             ]
-            
+
             # 并行处理每个数据块
             with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
                 futures = [
                     executor.submit(self._process_data_chunk, chunk, start_issue, end_issue)
                     for chunk in data_chunks
                 ]
-                
+
                 # 收集结果
                 chunk_results = [future.result() for future in futures]
-            
+
             # 合并结果
             combined_pair_counts = {}
             valid_periods = 0
@@ -1712,13 +1873,13 @@ class PairFrequencyAnalyzer:
                 skipped_periods += chunk_skipped_periods
                 for pair, count in pair_counts.items():
                     combined_pair_counts[pair] = combined_pair_counts.get(pair, 0) + count
-            
+
             # 排序和格式化结果
             frequency_items = sort_pair_frequencies(combined_pair_counts, valid_periods)
-            
+
             # 计算执行时间
             execution_time = (datetime.now() - start_time).total_seconds()
-            
+
             # 创建结果对象
             result = PairFrequencyResult(
                 target_issue=target_issue,
@@ -1733,54 +1894,55 @@ class PairFrequencyAnalyzer:
                 valid_periods=valid_periods,
                 skipped_periods=skipped_periods
             )
-            
+
             return result
-            
+
         except Exception as e:
             execution_time = (datetime.now() - start_time).total_seconds()
             raise ValueError(f"并行分析过程中发生错误: {str(e)}，执行时间: {execution_time:.3f}秒")
-    
+
     def _process_data_chunk(self, chunk: pd.DataFrame, start_issue: str, end_issue: str) -> Tuple[Dict[Tuple[int, int], int], int, int]:
         """
         处理单个数据块
-        
+
         Args:
             chunk: 数据块
             start_issue: 起始期号
             end_issue: 结束期号
-            
+
         Returns:
-            数字对频率字典、有效期数、跳过无效行数
+            数字对频率字典
         """
         return count_pair_frequencies(chunk, start_issue, end_issue, return_metadata=True)
+
     def optimize_performance(self) -> Dict[str, Any]:
         """
         性能优化建议
-        
+
         Returns:
             优化建议和当前性能状态
         """
         performance_report = self.performance_monitor.get_performance_report()
         cache_stats = self.cache.get_stats()
-        
+
         suggestions = []
-        
+
         # 缓存命中率建议
         if cache_stats['hit_rate'] < 50:
             suggestions.append("缓存命中率较低，考虑增加缓存大小或优化查询模式")
-        
+
         # 执行时间建议
         if performance_report['avg_execution_time'] > 5.0:
             suggestions.append("平均执行时间较长，建议启用并行处理或优化数据结构")
-        
+
         # 内存使用建议
         if performance_report['memory_usage_mb'] > 500:
             suggestions.append("内存使用较高，考虑减少缓存大小或清理历史数据")
-        
+
         # 并行处理建议
         if not self.enable_parallel and performance_report['avg_execution_time'] > 2.0:
             suggestions.append("建议启用并行处理以提高大数据集的处理速度")
-        
+
         return {
             'performance_report': performance_report,
             'cache_stats': cache_stats,
@@ -1788,11 +1950,11 @@ class PairFrequencyAnalyzer:
             'parallel_enabled': self.enable_parallel,
             'max_workers': self.max_workers
         }
-    
+
     def set_parallel_processing(self, enabled: bool, max_workers: Optional[int] = None):
         """
         设置并行处理参数
-        
+
         Args:
             enabled: 是否启用并行处理
             max_workers: 最大工作线程数
@@ -1800,43 +1962,43 @@ class PairFrequencyAnalyzer:
         self.enable_parallel = enabled
         if max_workers is not None:
             self.max_workers = min(max_workers, os.cpu_count() or 1)
-        
+
         self.logger.info(f"并行处理设置: enabled={enabled}, max_workers={self.max_workers}")
-    
+
     def get_performance_report(self) -> Dict[str, Any]:
         """获取详细的性能报告"""
         return self.performance_monitor.get_performance_report()
-    
+
     def get_performance_trend(self, last_n: int = 20) -> List[Dict[str, Any]]:
         """获取性能趋势数据"""
         return self.performance_monitor.get_recent_performance_trend(last_n)
-    
+
     def reset_performance_metrics(self):
         """重置性能指标"""
         self.performance_monitor.reset_metrics()
         self.logger.info("性能指标已重置")
-    
+
     def benchmark_performance(self, test_cases: List[Tuple[str, int]]) -> Dict[str, Any]:
         """
         性能基准测试
-        
+
         Args:
             test_cases: 测试用例列表 [(target_issue, period_count), ...]
-            
+
         Returns:
             基准测试结果
         """
         self.logger.info(f"开始性能基准测试，共{len(test_cases)}个测试用例")
-        
+
         benchmark_start = datetime.now()
         results = []
-        
+
         for i, (target_issue, period_count) in enumerate(test_cases):
             try:
                 case_start = datetime.now()
                 result = self.analyze_pair_frequency(target_issue, period_count, use_cache=False)
                 case_time = (datetime.now() - case_start).total_seconds()
-                
+
                 results.append({
                     'case_index': i + 1,
                     'target_issue': target_issue,
@@ -1846,9 +2008,9 @@ class PairFrequencyAnalyzer:
                     'result_size': len(result.frequency_items),
                     'success': True
                 })
-                
+
                 self.logger.info(f"测试用例 {i+1}/{len(test_cases)} 完成: {case_time:.3f}秒")
-                
+
             except Exception as e:
                 results.append({
                     'case_index': i + 1,
@@ -1858,11 +2020,11 @@ class PairFrequencyAnalyzer:
                     'error': str(e),
                     'success': False
                 })
-                
+
                 self.logger.error(f"测试用例 {i+1}/{len(test_cases)} 失败: {str(e)}")
-        
+
         total_time = (datetime.now() - benchmark_start).total_seconds()
-        
+
         # 计算统计信息
         successful_results = [r for r in results if r['success']]
         if successful_results:
@@ -1872,7 +2034,7 @@ class PairFrequencyAnalyzer:
             min_time = min(execution_times)
         else:
             avg_time = max_time = min_time = 0.0
-        
+
         benchmark_report = {
             'total_cases': len(test_cases),
             'successful_cases': len(successful_results),
@@ -1884,28 +2046,28 @@ class PairFrequencyAnalyzer:
             'cases_per_second': len(test_cases) / total_time if total_time > 0 else 0,
             'detailed_results': results
         }
-        
+
         self.logger.info(f"基准测试完成: {len(successful_results)}/{len(test_cases)} 成功")
-        
+
         return benchmark_report
-    
+
     def batch_analyze(
-        self, 
-        requests: List[Tuple[str, int]], 
+        self,
+        requests: List[Tuple[str, int]],
         use_cache: bool = True
     ) -> List[PairFrequencyResult]:
         """
         批量分析多个请求
-        
+
         Args:
             requests: 请求列表，每个元素为(target_issue, period_count)
             use_cache: 是否使用缓存
-            
+
         Returns:
             分析结果列表
         """
         results = []
-        
+
         for i, (target_issue, period_count) in enumerate(requests):
             try:
                 self.logger.info(f"批量分析进度: {i+1}/{len(requests)}")
@@ -1915,28 +2077,28 @@ class PairFrequencyAnalyzer:
                 self.logger.error(f"批量分析失败: {target_issue}, {period_count}, 错误: {str(e)}")
                 # 可以选择跳过错误或抛出异常
                 raise
-        
+
         return results
-    
+
     def get_top_pairs_across_periods(
-        self, 
-        target_issue: str, 
-        period_counts: List[int], 
+        self,
+        target_issue: str,
+        period_counts: List[int],
         top_n: int = 10
     ) -> Dict[int, List[PairFrequencyItem]]:
         """
         获取不同期数下的前N个高频数字对
-        
+
         Args:
             target_issue: 目标期号
             period_counts: 期数列表
             top_n: 返回前N个数字对
-            
+
         Returns:
             字典，键为期数，值为前N个数字对列表
         """
         results = {}
-        
+
         for period_count in period_counts:
             try:
                 result = self.analyze_pair_frequency(target_issue, period_count)
@@ -1944,53 +2106,53 @@ class PairFrequencyAnalyzer:
             except Exception as e:
                 self.logger.error(f"分析失败: 期数={period_count}, 错误: {str(e)}")
                 results[period_count] = []
-        
+
         return results
-    
+
     def find_consistent_pairs(
-        self, 
-        target_issue: str, 
-        period_counts: List[int], 
+        self,
+        target_issue: str,
+        period_counts: List[int],
         min_frequency: float = 30.0
     ) -> List[Tuple[int, int]]:
         """
         查找在不同期数下都保持高频的数字对
-        
+
         Args:
             target_issue: 目标期号
             period_counts: 期数列表
             min_frequency: 最小频率百分比
-            
+
         Returns:
             一致高频的数字对列表
         """
         consistent_pairs = None
-        
+
         for period_count in period_counts:
             try:
                 result = self.analyze_pair_frequency(target_issue, period_count)
-                
+
                 # 获取高频数字对
                 high_freq_pairs = set()
                 for item in result.frequency_items:
                     if item.percentage >= min_frequency:
                         high_freq_pairs.add(item.pair)
-                
+
                 # 计算交集
                 if consistent_pairs is None:
                     consistent_pairs = high_freq_pairs
                 else:
                     consistent_pairs = consistent_pairs.intersection(high_freq_pairs)
-                    
+
             except Exception as e:
                 self.logger.error(f"查找一致数字对失败: 期数={period_count}, 错误: {str(e)}")
-        
+
         return list(consistent_pairs) if consistent_pairs else []
 
 
 class Happy8Crawler:
     """快乐8数据爬虫"""
-    
+
     def __init__(self):
         self.session = requests.Session()
         self.session.headers.update({
@@ -2002,7 +2164,7 @@ class Happy8Crawler:
             'Upgrade-Insecure-Requests': '1'
         })
         self.session.timeout = 30
-    
+
     def crawl_recent_data(self, count: int = 50) -> List[Happy8Result]:
         """爬取最近的开奖数据 (用于增量更新，默认50期)"""
         print(f"开始爬取最近 {count} 期快乐8数据...")
@@ -2056,7 +2218,7 @@ class Happy8Crawler:
     def _crawl_from_500wan(self, count: int) -> List[Happy8Result]:
         """从500彩票网爬取数据"""
         results = []
-        
+
         # 500彩票网快乐8 XML数据接口 (真实官方数据源)
         xml_url = "https://kaijiang.500.com/static/info/kaijiang/xml/kl8/list.xml"
 
@@ -2119,9 +2281,9 @@ class Happy8Crawler:
         except Exception as e:
             print(f"❌ 从500彩票网XML接口爬取数据失败: {e}")
             raise
-        
+
         return results
-    
+
     def _crawl_from_zhcw(self, count: int) -> List[Happy8Result]:
         """从中彩网爬取数据 - 通过API接口获取真实数据"""
         results = []
@@ -2314,19 +2476,19 @@ class Happy8Crawler:
 
         return results
 
-    
+
     def _crawl_from_lottery_gov(self, count: int) -> List[Happy8Result]:
         """从官方彩票网站爬取数据"""
         results = []
-        
+
         # 中国福利彩票官网API
         api_url = "https://www.cwl.gov.cn/ygkj/wqkjgg/kl8/"
-        
+
         try:
             # 计算需要的页数
             page_size = 30
             pages_needed = (count + page_size - 1) // page_size
-            
+
             for page in range(1, min(pages_needed + 1, 50)):  # 增加到最多50页
                 params = {
                     'name': 'kl8',
@@ -2337,32 +2499,32 @@ class Happy8Crawler:
                     'dayEnd': '',
                     'pageNo': page
                 }
-                
+
                 response = self.session.get(api_url, params=params)
                 response.raise_for_status()
-                
+
                 data = response.json()
-                
+
                 if data.get('state') == 0 and 'result' in data:
                     for item in data['result']:
                         if len(results) >= count:
                             break
-                        
+
                         try:
                             issue = item.get('code', '')
                             date_str = item.get('date', '')
-                            
+
                             # 解析开奖号码
                             red_ball = item.get('red', '')
                             if red_ball:
                                 # 号码格式: "01,05,12,18,23,29,34,41,47,52,58,63,67,71,75,78,02,08,15,25"
                                 number_strs = red_ball.split(',')
                                 numbers = []
-                                
+
                                 for num_str in number_strs:
                                     if num_str.strip().isdigit():
                                         numbers.append(int(num_str.strip()))
-                                
+
                                 if len(numbers) == 20:
                                     result = Happy8Result(
                                         issue=issue,
@@ -2372,31 +2534,31 @@ class Happy8Crawler:
                                     )
                                     results.append(result)
                                     print(f"成功解析期号 {issue}，号码: {numbers[:5]}...")
-                        
+
                         except Exception as e:
                             print(f"解析官网数据失败: {e}")
                             continue
-                
+
                 # 添加延时
                 time.sleep(2)
-        
+
         except Exception as e:
             print(f"❌ 官方网站访问失败: {e}")
             return []
 
         return results
-    
+
     def _crawl_backup_data(self, count: int) -> List[Happy8Result]:
         """备用数据源 - 从历史数据文件或其他源获取"""
         print("使用备用数据源...")
-        
+
         # 尝试从本地历史文件读取
         backup_file = Path("data/backup_happy8_data.csv")
         if backup_file.exists():
             try:
                 import pandas as pd
                 df = pd.read_csv(backup_file)
-                
+
                 results = []
                 for _, row in df.head(count).iterrows():
                     numbers = []
@@ -2404,7 +2566,7 @@ class Happy8Crawler:
                         col_name = f'num{i}'
                         if col_name in row and pd.notna(row[col_name]):
                             numbers.append(int(row[col_name]))
-                    
+
                     if len(numbers) == 20:
                         result = Happy8Result(
                             issue=str(row.get('issue', '')),
@@ -2413,14 +2575,14 @@ class Happy8Crawler:
                             numbers=sorted(numbers)
                         )
                         results.append(result)
-                
+
                 if results:
                     print(f"从备用文件获取 {len(results)} 期数据")
                     return results
-            
+
             except Exception as e:
                 print(f"读取备用文件失败: {e}")
-        
+
         # 生成扩展的历史数据用于测试
         print(f"生成 {count} 期扩展历史数据用于测试...")
         results = []
@@ -2477,18 +2639,18 @@ class Happy8Crawler:
 
         print(f"生成了 {len(results)} 期扩展历史数据")
         return results
-    
+
     def crawl_single_issue(self, issue: str) -> Optional[Happy8Result]:
         """爬取单期数据"""
         print(f"爬取单期数据: {issue}")
-        
+
         # 尝试从各个数据源获取单期数据
         data_sources = [
             self._get_single_from_500wan,
             self._get_single_from_zhcw,
             self._get_single_from_lottery_gov
         ]
-        
+
         for get_func in data_sources:
             try:
                 result = get_func(issue)
@@ -2497,19 +2659,19 @@ class Happy8Crawler:
             except Exception as e:
                 print(f"获取单期数据失败 {get_func.__name__}: {e}")
                 continue
-        
+
         return None
-    
+
     def _get_single_from_500wan(self, issue: str) -> Optional[Happy8Result]:
         """从500彩票网获取单期数据"""
         # 实现单期数据获取逻辑
         return None
-    
+
     def _get_single_from_zhcw(self, issue: str) -> Optional[Happy8Result]:
         """从中彩网获取单期数据"""
         # 实现单期数据获取逻辑
         return None
-    
+
     def _get_single_from_lottery_gov(self, issue: str) -> Optional[Happy8Result]:
         """从官网获取单期数据"""
         # 实现单期数据获取逻辑
@@ -2518,7 +2680,7 @@ class Happy8Crawler:
 
 class DataManager:
     """数据管理器"""
-    
+
     def __init__(self, data_dir: str = "data"):
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(exist_ok=True)
@@ -2526,35 +2688,35 @@ class DataManager:
         self.crawler = Happy8Crawler()
         self.validator = DataValidator()
         self._data_cache = None
-    
+
     def load_historical_data(self) -> pd.DataFrame:
         """加载历史数据"""
         if self._data_cache is not None:
             return self._data_cache
-        
+
         if not self.data_file.exists():
             print("数据文件不存在，开始爬取初始数据...")
             self.crawl_initial_data()
-        
+
         try:
             data = pd.read_csv(self.data_file)
             print(f"成功加载 {len(data)} 期历史数据")
-            
+
             # 数据预处理
             data = self._preprocess_data(data)
-            
+
             # 数据验证
             validation_result = self.validator.validate_happy8_data(data)
             if validation_result['errors']:
                 print(f"数据验证发现问题: {validation_result['errors']}")
-            
+
             self._data_cache = data
             return data
-            
+
         except Exception as e:
             print(f"加载数据失败: {e}")
             return pd.DataFrame()
-    
+
     def crawl_initial_data(self, count: int = 1000):
         """爬取初始数据"""
         try:
@@ -2763,7 +2925,7 @@ class DataManager:
         self._data_cache = None
         print(f"数据已保存到: {self.data_file}")
         print(f"总共保存 {len(combined_df)} 期数据（已去重和排序）")
-    
+
     def _preprocess_data(self, data: pd.DataFrame) -> pd.DataFrame:
         """数据预处理"""
         # 确保期号为字符串类型
@@ -2771,7 +2933,7 @@ class DataManager:
 
         # 确保期号倒序排序（最新期号在前）
         data = data.sort_values('issue', ascending=False).reset_index(drop=True)
-        
+
         # 添加衍生特征
         number_cols = [f'num{i}' for i in range(1, 21)]
         data['sum'] = data[number_cols].sum(axis=1)
@@ -2779,9 +2941,9 @@ class DataManager:
         data['range'] = data[number_cols].max(axis=1) - data[number_cols].min(axis=1)
         data['odd_count'] = data[number_cols].apply(lambda row: sum(1 for x in row if x % 2 == 1), axis=1)
         data['big_count'] = data[number_cols].apply(lambda row: sum(1 for x in row if x >= 41), axis=1)
-        
+
         return data
-    
+
     def get_issue_result(self, issue: str) -> Optional[Happy8Result]:
         """获取指定期号的开奖结果"""
         data = self.load_historical_data()
@@ -2809,7 +2971,7 @@ class DataManager:
             )
         else:
             print(f"本地数据中未找到期号 {issue_str}，尝试网络获取...")
-        
+
         # 尝试从网络获取
         try:
             result = self.crawler.crawl_single_issue(issue)
@@ -2817,17 +2979,17 @@ class DataManager:
                 return result
         except Exception as e:
             print(f"网络获取失败: {e}")
-        
+
         # 如果都找不到，返回None
         return None
 
 
 class FrequencyPredictor:
     """频率分析预测器"""
-    
+
     def __init__(self, analyzer):
         self.analyzer = analyzer
-    
+
     def predict(self, data: pd.DataFrame, count: int = 30, **kwargs) -> Tuple[List[int], List[float]]:
         """基于频率分析的预测"""
         print("执行频率分析预测...")
@@ -2839,19 +3001,19 @@ class FrequencyPredictor:
         if 'issue' in data.columns:
             data['issue'] = data['issue'].astype(str)
             data = data.sort_values('issue', ascending=False).reset_index(drop=True)
-        
+
         # 统计每个号码的出现频率
         frequency_stats = self._calculate_frequency(data)
-        
+
         # 按频率排序
         sorted_numbers = sorted(frequency_stats.items(), key=lambda x: (-x[1], x[0]))
-        
+
         # 选择前count个号码
         predicted_numbers = [num for num, freq in sorted_numbers[:count]]
         confidence_scores = [float(freq) for num, freq in sorted_numbers[:count]]
-        
+
         return predicted_numbers, confidence_scores
-    
+
     def _calculate_frequency(self, data: pd.DataFrame) -> Dict[int, float]:
         """计算号码频率"""
         frequency = {}
@@ -2859,7 +3021,7 @@ class FrequencyPredictor:
 
         if total_periods <= 0:
             return {num: 0.0 for num in range(1, 81)}
-        
+
         # 统计每个号码出现次数
         for num in range(1, 81):
             count = 0
@@ -2868,16 +3030,16 @@ class FrequencyPredictor:
                 if num in numbers:
                     count += 1
             frequency[num] = count / total_periods
-        
+
         return frequency
 
 
 class HotColdPredictor:
     """冷热号分析预测器"""
-    
+
     def __init__(self, analyzer):
         self.analyzer = analyzer
-    
+
     def predict(self, data: pd.DataFrame, count: int = 30, **kwargs) -> Tuple[List[int], List[float]]:
         """基于冷热号分析的预测"""
         print("执行冷热号分析预测...")
@@ -2889,21 +3051,21 @@ class HotColdPredictor:
         if 'issue' in data.columns:
             data['issue'] = data['issue'].astype(str)
             data = data.sort_values('issue', ascending=False).reset_index(drop=True)
-        
+
         # 计算最近期数的频率
         recent_periods = min(100, len(data))
         recent_data = data.head(recent_periods)
-        
+
         # 计算热号（高频号码）
         hot_numbers = self._get_hot_numbers(recent_data)
-        
+
         # 计算冷号（低频号码，可能回补）
         cold_numbers = self._get_cold_numbers(data)
-        
+
         # 组合预测：70%热号 + 30%冷号
         hot_count = min(count, max(1, int(count * 0.7)))
         cold_count = count - hot_count
-        
+
         predicted_numbers = []
         prediction_sources = []
         seen_numbers = set()
@@ -2934,7 +3096,7 @@ class HotColdPredictor:
             predicted_numbers.append(num)
             prediction_sources.append('fill')
             seen_numbers.add(num)
-        
+
         # 生成置信度分数
         confidence_scores = []
         source_ranks = {'hot': 0, 'cold': 0, 'fill': 0}
@@ -2948,9 +3110,9 @@ class HotColdPredictor:
                 confidence_scores.append(0.6 - rank * 0.1 / max(cold_count, 1))
             else:
                 confidence_scores.append(max(0.1, 0.5 - rank * 0.1 / max(count, 1)))
-        
+
         return predicted_numbers, confidence_scores
-    
+
     def _get_hot_numbers(self, data: pd.DataFrame) -> List[int]:
         """获取热号"""
         frequency = {}
@@ -2961,26 +3123,26 @@ class HotColdPredictor:
                 if num in numbers:
                     count += 1
             frequency[num] = count
-        
+
         # 按频率排序
         sorted_numbers = sorted(frequency.items(), key=lambda x: (-x[1], x[0]))
         return [num for num, _ in sorted_numbers]
-    
+
     def _get_cold_numbers(self, data: pd.DataFrame) -> List[int]:
         """获取冷号"""
         # 计算每个号码的遗漏期数
         missing_periods = {}
-        
+
         for num in range(1, 81):
             missing_periods[num] = 0
-            
+
             # 从最新期开始往前查找
             for _, row in data.iterrows():
                 numbers = [row[f'num{i}'] for i in range(1, 21)]
                 if num in numbers:
                     break
                 missing_periods[num] += 1
-        
+
         # 按遗漏期数排序
         sorted_numbers = sorted(missing_periods.items(), key=lambda x: (-x[1], x[0]))
         return [num for num, _ in sorted_numbers]
@@ -3008,10 +3170,10 @@ class MissingPredictor:
         missing_stats = self._calculate_missing_periods(data)
 
         # 计算遗漏启发式评分；快乐8公平开奖下单号理论概率仍为25%。
-        rebound_probs = self._calculate_rebound_probability(missing_stats, data)
+        rebound_scores = self._calculate_rebound_probability(missing_stats, data)
 
-        # 按回补概率排序
-        sorted_probs = sorted(rebound_probs.items(), key=lambda x: (-x[1], x[0]))
+        # 按启发式排序分排序
+        sorted_probs = sorted(rebound_scores.items(), key=lambda x: (-x[1], x[0]))
 
         predicted_numbers = [num for num, prob in sorted_probs[:count]]
         confidence_scores = [prob for num, prob in sorted_probs[:count]]
@@ -3171,8 +3333,82 @@ class SumAnalyzer:
         return lower_bound, upper_bound
 
 
+def _draw_sets_oldest_first(data: pd.DataFrame) -> List[set]:
+    """返回按时间升序排列的开奖集合。"""
+    ordered = ensure_oldest_first(data)
+    draw_sets = []
+    for _, row in ordered.iterrows():
+        try:
+            numbers = extract_row_numbers(row)
+        except Exception:
+            continue
+        if validate_numbers_for_draw(numbers):
+            draw_sets.append(set(numbers))
+    return draw_sets
+
+
+def calculate_markov_state_scores(data: pd.DataFrame, order: int = 1, alpha: float = 1.0) -> Dict[int, float]:
+    """
+    计算单号跨期Markov状态评分。
+
+    每个号码的状态为过去order期是否出现的0/1序列，目标为下一期是否出现。
+    返回的是后验均值式排序分，不代表可保证命中的概率。
+    """
+    if data is None or data.empty:
+        raise ValueError("马尔可夫分析需要历史数据")
+    if order < 1:
+        raise ValueError("马尔可夫阶数必须大于0")
+
+    draw_sets = _draw_sets_oldest_first(data)
+    if len(draw_sets) <= order:
+        # 数据不足时退回到单号理论基线加历史频率，保持确定性。
+        frequency = FrequencyPredictor(None)._calculate_frequency(ensure_newest_first(data))
+        return {
+            num: 0.5 * THEORETICAL_SINGLE_PROBABILITY + 0.5 * frequency.get(num, 0.0)
+            for num in NUMBER_RANGE
+        }
+
+    global_hits = {num: sum(1 for draw in draw_sets if num in draw) for num in NUMBER_RANGE}
+    global_score = {
+        num: (global_hits[num] + alpha) / (len(draw_sets) + 2 * alpha)
+        for num in NUMBER_RANGE
+    }
+    scores = {}
+
+    def transition_score_for_number(num: int, state_order: int) -> float:
+        """递归计算单号条件转移分数，高阶状态缺失时回退到低阶。"""
+        if state_order <= 0 or len(draw_sets) <= state_order:
+            return global_score[num]
+
+        transitions: Dict[Tuple[int, ...], List[int]] = {}
+        for idx in range(state_order, len(draw_sets)):
+            state = tuple(
+                1 if num in draw_sets[idx - offset] else 0
+                for offset in range(state_order, 0, -1)
+            )
+            outcome = 1 if num in draw_sets[idx] else 0
+            transitions.setdefault(state, [0, 0])
+            transitions[state][outcome] += 1
+
+        current_state = tuple(
+            1 if num in draw_sets[-offset] else 0
+            for offset in range(state_order, 0, -1)
+        )
+        if current_state not in transitions:
+            return transition_score_for_number(num, state_order - 1)
+
+        misses, hits = transitions[current_state]
+        fallback_score = transition_score_for_number(num, state_order - 1)
+        return float((hits + alpha * fallback_score) / (hits + misses + alpha))
+
+    for num in NUMBER_RANGE:
+        scores[num] = transition_score_for_number(num, order)
+
+    return scores
+
+
 class MarkovPredictor:
-    """1阶马尔可夫链预测器 - 基于真实号码转移"""
+    """1阶马尔可夫链预测器 - 基于单号跨期出现状态转移"""
 
     def __init__(self, analyzer):
         self.analyzer = analyzer
@@ -3180,355 +3416,47 @@ class MarkovPredictor:
     def predict(self, data: pd.DataFrame, count: int = 30, **kwargs) -> Tuple[List[int], List[float]]:
         """1阶马尔可夫链预测"""
         print("执行1阶马尔可夫链预测...")
-
-        # 统计每个号码的出现频率作为基础概率
-        number_frequencies = np.zeros(80)
-
-        # 统计号码频率
-        for _, row in data.iterrows():
-            numbers = [int(row[f'num{i}']) for i in range(1, 21)]
-            for num in numbers:
-                number_frequencies[num - 1] += 1
-
-        # 归一化频率
-        total_count = np.sum(number_frequencies)
-        if total_count > 0:
-            number_frequencies = number_frequencies / total_count
-        else:
-            number_frequencies = np.ones(80) / 80
-
-        # 构建基于位置的转移概率
-        position_transitions = np.zeros((20, 80))  # 20个位置，每个位置对80个号码的概率
-
-        for _, row in data.iterrows():
-            numbers = [int(row[f'num{i}']) for i in range(1, 21)]
-            for pos, num in enumerate(numbers):
-                position_transitions[pos][num - 1] += 1
-
-        # 归一化位置转移
-        for pos in range(20):
-            row_sum = np.sum(position_transitions[pos])
-            if row_sum > 0:
-                position_transitions[pos] /= row_sum
-            else:
-                position_transitions[pos] = number_frequencies
-
-        # 结合频率和位置信息计算最终概率
-        # 使用加权平均：70%频率 + 30%位置信息
-        final_probs = 0.7 * number_frequencies
-        for pos in range(20):
-            final_probs += 0.3 * position_transitions[pos] / 20
-
-        next_probs = final_probs
-
-        # 选择概率最高的号码
-        number_probs = [(i + 1, prob) for i, prob in enumerate(next_probs)]
-        number_probs.sort(key=lambda x: x[1], reverse=True)
-
-        predicted_numbers = [num for num, _ in number_probs[:count]]
-        confidence_scores = [float(prob) for _, prob in number_probs[:count]]
-
-        return predicted_numbers, confidence_scores
+        scores = calculate_markov_state_scores(data, order=1)
+        return rank_number_scores(scores, count)
 
 
 class Markov2ndPredictor:
-    """2阶马尔可夫链预测器"""
+    """2阶马尔可夫链预测器 - 基于前两期单号出现状态"""
 
     def __init__(self, analyzer):
         self.analyzer = analyzer
 
     def predict(self, data: pd.DataFrame, count: int = 30, **kwargs) -> Tuple[List[int], List[float]]:
-        """2阶马尔可夫链预测 - 基于频率和位置的改进预测"""
+        """2阶马尔可夫链预测"""
         print(f"🔄 执行2阶马尔可夫链预测...")
         print(f"分析数据: {len(data)}期")
-
-        # 统计每个号码在不同位置的出现频率
-        position_frequencies = np.zeros((20, 80))  # 20个位置，80个号码
-
-        for _, row in data.iterrows():
-            numbers = [int(row[f'num{i}']) for i in range(1, 21)]
-            for pos, num in enumerate(numbers):
-                position_frequencies[pos][num - 1] += 1
-
-        # 归一化位置频率
-        for pos in range(20):
-            total = np.sum(position_frequencies[pos])
-            if total > 0:
-                position_frequencies[pos] /= total
-            else:
-                position_frequencies[pos] = np.ones(80) / 80
-
-        # 统计号码间的共现关系
-        cooccurrence_matrix = np.zeros((80, 80))
-
-        for _, row in data.iterrows():
-            numbers = [int(row[f'num{i}']) for i in range(1, 21)]
-            for i in range(len(numbers)):
-                for j in range(i + 1, len(numbers)):
-                    num1, num2 = numbers[i] - 1, numbers[j] - 1
-                    cooccurrence_matrix[num1][num2] += 1
-                    cooccurrence_matrix[num2][num1] += 1
-
-        # 归一化共现矩阵
-        for i in range(80):
-            total = np.sum(cooccurrence_matrix[i])
-            if total > 0:
-                cooccurrence_matrix[i] /= total
-            else:
-                cooccurrence_matrix[i] = np.ones(80) / 80
-
-        # 计算综合概率：位置频率 + 共现关系
-        final_probs = np.zeros(80)
-
-        # 位置频率权重 (40%)
-        for pos in range(20):
-            final_probs += 0.4 * position_frequencies[pos] / 20
-
-        # 共现关系权重 (60%)
-        if len(data) > 0:
-            recent_numbers = [int(data.iloc[0][f'num{i}']) for i in range(1, 21)]
-            for num in recent_numbers:
-                final_probs += 0.6 * cooccurrence_matrix[num - 1] / len(recent_numbers)
-        else:
-            final_probs += 0.6 * np.ones(80) / 80
-
-        print(f"构建了 {len(data)} 期数据的2阶转移关系")
-        print(f"初始状态: 基于最近期号码关系")
-
-        # 选择概率最高的号码
-        number_probs = [(i + 1, prob) for i, prob in enumerate(final_probs)]
-        number_probs.sort(key=lambda x: x[1], reverse=True)
-
-        predicted_numbers = [num for num, _ in number_probs[:count]]
-        confidence_scores = [float(prob) for _, prob in number_probs[:count]]
-
+        scores = calculate_markov_state_scores(data, order=2)
+        predicted_numbers, confidence_scores = rank_number_scores(scores, count)
         print(f"✅ 2阶马尔可夫链预测完成")
-        print(f"预测号码: {predicted_numbers[:10]}...")
-        print(f"平均置信度: {np.mean(confidence_scores):.3f}")
-
         return predicted_numbers, confidence_scores
 
 
 class Markov3rdPredictor:
-    """3阶马尔可夫链预测器 - 基于特征状态转移"""
+    """3阶马尔可夫链预测器 - 基于前三期单号出现状态"""
 
     def __init__(self, analyzer):
         self.analyzer = analyzer
 
     def predict(self, data: pd.DataFrame, count: int = 30, **kwargs) -> Tuple[List[int], List[float]]:
-        """3阶马尔可夫链预测 - 基于特征转移而非具体号码转移"""
-        print(f"🔄 执行3阶马尔可夫链预测（特征化状态空间）...")
+        """3阶马尔可夫链预测"""
+        print(f"🔄 执行3阶马尔可夫链预测...")
         print(f"分析数据: {len(data)}期")
-
-        # 提取每期的特征
-        features_history = []
-        for _, row in data.iterrows():
-            numbers = [int(row[f'num{i}']) for i in range(1, 21)]
-            features = self._extract_features(numbers)
-            features_history.append(features)
-
-        # 构建3阶特征状态转移
-        transition_counts = {}
-        state_counts = {}
-
-        for i in range(3, len(features_history)):
-            # 前三期的特征作为状态
-            state1 = tuple(features_history[i-3])
-            state2 = tuple(features_history[i-2])
-            state3 = tuple(features_history[i-1])
-            next_features = tuple(features_history[i])
-
-            state_triple = (state1, state2, state3)
-
-            if state_triple not in transition_counts:
-                transition_counts[state_triple] = {}
-                state_counts[state_triple] = 0
-
-            if next_features not in transition_counts[state_triple]:
-                transition_counts[state_triple][next_features] = 0
-
-            transition_counts[state_triple][next_features] += 1
-            state_counts[state_triple] += 1
-
-        print(f"构建了 {len(transition_counts)} 个3阶特征状态转移")
-
-        # 获取最近三期的特征作为当前状态
-        if len(features_history) >= 3:
-            current_state = (
-                tuple(features_history[-3]),
-                tuple(features_history[-2]),
-                tuple(features_history[-1])
-            )
-        else:
-            # 数据不足，使用默认特征
-            default_features = self._extract_features(list(range(1, 21)))
-            current_state = (tuple(default_features),) * 3
-
-        # 预测下一期特征
-        predicted_features = self._predict_next_features(
-            transition_counts, state_counts, current_state
-        )
-
-        # 根据预测特征生成号码
-        predicted_numbers, confidence_scores = self._features_to_numbers(
-            predicted_features, data, count
-        )
-
+        scores = calculate_markov_state_scores(data, order=3)
+        predicted_numbers, confidence_scores = rank_number_scores(scores, count)
         print(f"✅ 3阶马尔可夫链预测完成")
-        print(f"预测特征: 和值={predicted_features[0]:.1f}, 奇偶比={predicted_features[1]:.2f}")
-        print(f"预测号码: {predicted_numbers[:10]}...")
-        print(f"平均置信度: {np.mean(confidence_scores):.3f}")
-
         return predicted_numbers, confidence_scores
-
-    def _extract_features(self, numbers: List[int]) -> List[float]:
-        """提取号码特征"""
-        # 和值特征
-        sum_value = sum(numbers) / 20  # 归一化
-
-        # 奇偶比特征
-        odd_count = sum(1 for num in numbers if num % 2 == 1)
-        odd_ratio = odd_count / 20
-
-        # 大小比特征 (>40为大号)
-        big_count = sum(1 for num in numbers if num > 40)
-        big_ratio = big_count / 20
-
-        # 区域分布特征 (8个区域)
-        zone_counts = [0] * 8
-        for num in numbers:
-            zone_idx = (num - 1) // 10
-            zone_counts[zone_idx] += 1
-        zone_ratios = [count / 20 for count in zone_counts]
-
-        return [sum_value, odd_ratio, big_ratio] + zone_ratios
-
-    def _predict_next_features(self, transition_counts, state_counts, current_state):
-        """预测下一期特征"""
-        alpha = 0.01  # 拉普拉斯平滑参数
-
-        if current_state in transition_counts:
-            # 找到最可能的下一特征状态
-            feature_probs = {}
-            total_count = state_counts[current_state]
-
-            for next_features, count in transition_counts[current_state].items():
-                prob = (count + alpha) / (total_count + alpha * len(transition_counts[current_state]))
-                feature_probs[next_features] = prob
-
-            # 选择概率最高的特征
-            best_features = max(feature_probs.items(), key=lambda x: x[1])[0]
-            return list(best_features)
-        else:
-            # 如果没有匹配的状态，使用历史平均特征
-            return self._get_average_features(transition_counts)
-
-    def _get_average_features(self, transition_counts):
-        """获取历史平均特征"""
-        all_features = []
-        for state_triple in transition_counts:
-            for next_features in transition_counts[state_triple]:
-                all_features.append(list(next_features))
-
-        if all_features:
-            avg_features = np.mean(all_features, axis=0)
-            return avg_features.tolist()
-        else:
-            # 默认特征
-            return [10.5, 0.5, 0.5] + [0.125] * 8
-
-    def _features_to_numbers(self, predicted_features, data, count):
-        """根据预测特征生成号码"""
-        target_sum = predicted_features[0] * 20
-        target_odd_ratio = predicted_features[1]
-        target_big_ratio = predicted_features[2]
-        target_zone_ratios = predicted_features[3:11]
-
-        # 使用遗传算法或启发式方法生成符合特征的号码组合
-        best_combination = self._generate_combination_by_features(
-            target_sum, target_odd_ratio, target_big_ratio, target_zone_ratios, count
-        )
-
-        # 计算置信度（基于特征匹配度）
-        confidence_scores = self._calculate_feature_confidence(
-            best_combination, predicted_features
-        )
-
-        return best_combination, confidence_scores
-
-    def _generate_combination_by_features(self, target_sum, target_odd_ratio,
-                                        target_big_ratio, target_zone_ratios, count):
-        """基于目标特征生成号码组合"""
-        best_combination = []
-        best_score = float('-inf')
-
-        # 多次随机尝试，选择最符合特征的组合
-        for _ in range(1000):
-            combination = np.random.choice(range(1, 81), size=count, replace=False).tolist()
-            score = self._evaluate_combination(
-                combination, target_sum, target_odd_ratio, target_big_ratio, target_zone_ratios
-            )
-
-            if score > best_score:
-                best_score = score
-                best_combination = combination.copy()
-
-        return sorted(best_combination)
-
-    def _evaluate_combination(self, combination, target_sum, target_odd_ratio,
-                            target_big_ratio, target_zone_ratios):
-        """评估号码组合与目标特征的匹配度"""
-        # 和值匹配度
-        actual_sum = sum(combination)
-        sum_score = 1.0 / (1.0 + abs(actual_sum - target_sum))
-
-        # 奇偶比匹配度
-        actual_odd_ratio = sum(1 for num in combination if num % 2 == 1) / len(combination)
-        odd_score = 1.0 / (1.0 + abs(actual_odd_ratio - target_odd_ratio))
-
-        # 大小比匹配度
-        actual_big_ratio = sum(1 for num in combination if num > 40) / len(combination)
-        big_score = 1.0 / (1.0 + abs(actual_big_ratio - target_big_ratio))
-
-        # 区域分布匹配度
-        actual_zone_counts = [0] * 8
-        for num in combination:
-            zone_idx = (num - 1) // 10
-            actual_zone_counts[zone_idx] += 1
-        actual_zone_ratios = [count / len(combination) for count in actual_zone_counts]
-
-        zone_score = 0
-        for i in range(8):
-            zone_score += 1.0 / (1.0 + abs(actual_zone_ratios[i] - target_zone_ratios[i]))
-        zone_score /= 8
-
-        # 综合评分
-        return (sum_score + odd_score + big_score + zone_score) / 4
-
-    def _calculate_feature_confidence(self, combination, predicted_features):
-        """计算基于特征的置信度"""
-        confidence = self._evaluate_combination(
-            combination,
-            predicted_features[0] * 20,
-            predicted_features[1],
-            predicted_features[2],
-            predicted_features[3:11]
-        )
-
-        # 为每个号码分配相同的置信度
-        return [confidence] * len(combination)
 
 
 class AdaptiveMarkovPredictor:
-    """自适应马尔可夫链预测器 - 1-5阶智能融合"""
+    """自适应马尔可夫链预测器 - 1-3阶单号跨期状态融合"""
 
     def __init__(self, analyzer):
         self.analyzer = analyzer
-        self.base_predictors = {
-            1: MarkovPredictor(analyzer),
-            2: Markov2ndPredictor(analyzer),
-            3: Markov3rdPredictor(analyzer)
-        }
 
     def predict(self, data: pd.DataFrame, count: int = 30, **kwargs) -> Tuple[List[int], List[float]]:
         """自适应马尔可夫链预测 - 多阶融合"""
@@ -3539,18 +3467,15 @@ class AdaptiveMarkovPredictor:
         weights = self._calculate_adaptive_weights(data)
         print(f"动态权重: {weights}")
 
-        # 收集各阶预测结果
-        all_predictions = {}
-        all_confidences = {}
+        fused_scores = {num: 0.0 for num in NUMBER_RANGE}
 
         for order, weight in weights.items():
             if weight > 0:
                 try:
-                    if order in self.base_predictors:
-                        numbers, confidences = self.base_predictors[order].predict(data, count * 2)
-                        all_predictions[order] = numbers
-                        all_confidences[order] = confidences
-                        print(f"{order}阶预测完成: {len(numbers)}个号码")
+                    order_scores = calculate_markov_state_scores(data, order=order)
+                    for num, score in order_scores.items():
+                        fused_scores[num] += float(score) * weight
+                    print(f"{order}阶转移评分完成: {len(order_scores)}个号码")
                 except Exception as e:
                     print(f"⚠️ {order}阶预测失败: {e}")
                     weights[order] = 0
@@ -3560,15 +3485,19 @@ class AdaptiveMarkovPredictor:
         if total_weight > 0:
             weights = {k: v/total_weight for k, v in weights.items()}
 
-        # 融合预测结果
-        final_numbers, final_confidences = self._fuse_predictions(
-            all_predictions, all_confidences, weights, count
-        )
+        if total_weight <= 0:
+            fused_scores = calculate_markov_state_scores(data, order=1)
+        else:
+            # 若有预测器失败，按剩余权重重新缩放分数。
+            fused_scores = {num: score / total_weight for num, score in fused_scores.items()}
+
+        final_numbers, final_confidences = rank_number_scores(fused_scores, count)
 
         print(f"✅ 自适应马尔可夫链预测完成")
         print(f"融合了 {len([w for w in weights.values() if w > 0])} 个预测器")
         print(f"预测号码: {final_numbers[:10]}...")
-        print(f"平均置信度: {np.mean(final_confidences):.3f}")
+        if final_confidences:
+            print(f"平均置信度: {np.mean(final_confidences):.3f}")
 
         return final_numbers, final_confidences
 
@@ -3645,7 +3574,9 @@ class LSTMPredictor:
         self.analyzer = analyzer
         self.model = None
         self.scaler = StandardScaler()
-    
+        self.sequence_length = 10
+        self.validation_jaccard_score = 0.0
+
     def predict(self, data: pd.DataFrame, count: int = 30, **kwargs) -> Tuple[List[int], List[float]]:
         """LSTM预测"""
         print("🔄 执行LSTM神经网络预测...")
@@ -3658,7 +3589,10 @@ class LSTMPredictor:
                 return frequency_predictor.predict(data, count)
 
             # 准备训练数据
-            X, y = self._prepare_training_data(data)
+            X, y = self._prepare_training_data(
+                data,
+                sequence_length=self.sequence_length,
+            )
 
             if X.size == 0:
                 print("⚠️ 训练数据不足，使用频率分析作为后备")
@@ -3667,14 +3601,21 @@ class LSTMPredictor:
 
             # 构建和训练模型
             self.model = self._build_model(X.shape)
-            self._train_model(X, y)
+            self.validation_jaccard_score = self._train_model(X, y)
 
             # 执行预测
-            predicted_numbers, confidence_scores = self._predict_numbers(X, count)
+            prediction_sequence = self._build_latest_sequence(
+                data,
+                sequence_length=self.sequence_length,
+            )
+            predicted_numbers, confidence_scores = self._predict_numbers(
+                prediction_sequence, count
+            )
 
             print(f"✅ LSTM预测完成")
             print(f"预测号码: {predicted_numbers[:10]}...")
-            print(f"平均置信度: {np.mean(confidence_scores):.3f}")
+            print(f"尾段验证Jaccard: {self.validation_jaccard_score:.3f}")
+            print(f"平均排序分: {np.mean(confidence_scores):.3f}")
 
             return predicted_numbers, confidence_scores
 
@@ -3682,41 +3623,56 @@ class LSTMPredictor:
             print(f"⚠️ LSTM预测失败: {e}")
             frequency_predictor = FrequencyPredictor(self.analyzer)
             return frequency_predictor.predict(data, count)
-    
+
     def _prepare_training_data(self, data: pd.DataFrame, sequence_length: int = 10):
         """准备训练数据"""
-        if len(data) < sequence_length + 1:
+        ordered_data = ensure_oldest_first(data)
+        if len(ordered_data) < sequence_length + 2:
             return np.array([]), np.array([])
-        
+
         features = []
         targets = []
-        
-        for i in range(len(data) - sequence_length):
+
+        for i in range(len(ordered_data) - sequence_length):
             # 输入序列
-            sequence_data = data.iloc[i:i+sequence_length]
+            sequence_data = ordered_data.iloc[i:i+sequence_length]
             sequence_features = []
-            
+
             for _, row in sequence_data.iterrows():
-                numbers = [row[f'num{j}'] for j in range(1, 21)]
+                numbers = extract_row_numbers(row)
                 feature_vector = self._extract_features(numbers)
                 sequence_features.append(feature_vector)
-            
+
             features.append(sequence_features)
-            
+
             # 目标：下一期的号码
-            next_row = data.iloc[i + sequence_length]
-            next_numbers = [next_row[f'num{j}'] for j in range(1, 21)]
+            next_row = ordered_data.iloc[i + sequence_length]
+            next_numbers = extract_row_numbers(next_row)
             targets.append(self._encode_target(next_numbers))
-        
+
         X = np.array(features)
         y = np.array(targets)
-        
+
         return X, y
-    
+
+    def _build_latest_sequence(self, data: pd.DataFrame, sequence_length: int = 10):
+        """构造用于预测下一期的最新历史窗口。"""
+        ordered_data = ensure_oldest_first(data)
+        if len(ordered_data) < sequence_length:
+            raise ValueError("构造LSTM预测窗口的数据不足")
+
+        sequence_features = []
+        latest_window = ordered_data.tail(sequence_length)
+        for _, row in latest_window.iterrows():
+            numbers = extract_row_numbers(row)
+            sequence_features.append(self._extract_features(numbers))
+
+        return np.array([sequence_features])
+
     def _extract_features(self, numbers: List[int]) -> List[float]:
         """提取特征向量"""
         features = []
-        
+
         # 基础统计特征
         features.extend([
             sum(numbers) / 20,  # 平均值
@@ -3724,32 +3680,32 @@ class LSTMPredictor:
             sum(1 for n in numbers if n % 2 == 1) / 20,  # 奇数比例
             sum(1 for n in numbers if n >= 41) / 20,  # 大号比例
         ])
-        
+
         # 区域分布特征
         zone_counts = [0] * 8
         for num in numbers:
             zone_idx = (num - 1) // 10
             zone_counts[zone_idx] += 1
-        
+
         features.extend([count / 20 for count in zone_counts])
-        
+
         # 号码分布特征 (简化为10个区间)
         interval_counts = [0] * 10
         for num in numbers:
             interval_idx = min((num - 1) // 8, 9)
             interval_counts[interval_idx] += 1
-        
+
         features.extend([count / 20 for count in interval_counts])
-        
+
         return features
-    
+
     def _encode_target(self, numbers: List[int]) -> List[float]:
         """编码目标"""
         target = [0.0] * 80
         for num in numbers:
             target[num - 1] = 1.0
         return target
-    
+
     def _build_model(self, input_shape):
         """构建LSTM模型"""
         model = tf.keras.Sequential([
@@ -3761,29 +3717,28 @@ class LSTMPredictor:
             tf.keras.layers.Dropout(0.3),
             tf.keras.layers.Dense(80, activation='sigmoid')  # 80个号码的概率
         ])
-        
+
         model.compile(
             optimizer='adam',
-            loss='binary_crossentropy',
-            metrics=['accuracy']
+            loss='binary_crossentropy'
         )
-        
+
         return model
-    
+
     def _train_model(self, X, y):
         """训练模型"""
         print("开始训练LSTM模型...")
-        
-        # 分割训练和验证数据
-        X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42)
-        
+
+        # 按时间切分训练和验证数据，避免随机打乱时间序列。
+        X_train, X_val, y_train, y_val = split_time_series_tail_validation(X, y)
+
         # 早停回调
         early_stopping = tf.keras.callbacks.EarlyStopping(
             monitor='val_loss',
             patience=10,
             restore_best_weights=True
         )
-        
+
         # 训练模型
         history = self.model.fit(
             X_train, y_train,
@@ -3791,30 +3746,37 @@ class LSTMPredictor:
             batch_size=32,
             validation_data=(X_val, y_val),
             callbacks=[early_stopping],
+            shuffle=False,
             verbose=0
         )
-        
-        print(f"LSTM模型训练完成，最终验证损失: {min(history.history['val_loss']):.4f}")
-    
+
+        validation_predictions = self.model.predict(X_val, verbose=0)
+        validation_jaccard = calculate_multilabel_jaccard_score(
+            y_val,
+            validation_predictions,
+            top_k=DRAW_NUMBER_COUNT,
+        )
+        print(
+            f"LSTM模型训练完成，最终验证损失: {min(history.history['val_loss']):.4f}，"
+            f"尾段验证Jaccard: {validation_jaccard:.3f}"
+        )
+        return validation_jaccard
+
     def _predict_numbers(self, X, count: int) -> Tuple[List[int], List[float]]:
         """预测号码"""
-        # 使用最后一个序列进行预测
-        if len(X) > 0:
-            last_sequence = X[-1:]
-        else:
-            # 如果没有数据，创建零序列
-            last_sequence = np.zeros((1, 10, 22))
-        
-        # 预测概率
-        probabilities = self.model.predict(last_sequence, verbose=0)[0]
-        
+        if len(X) == 0:
+            raise ValueError("缺少LSTM预测窗口")
+
+        # 预测排序分
+        probabilities = self.model.predict(X, verbose=0)[0]
+
         # 选择概率最高的号码
         number_probs = [(i + 1, prob) for i, prob in enumerate(probabilities)]
-        number_probs.sort(key=lambda x: x[1], reverse=True)
-        
+        number_probs.sort(key=lambda x: (-x[1], x[0]))
+
         predicted_numbers = [num for num, _ in number_probs[:count]]
         confidence_scores = [prob for _, prob in number_probs[:count]]
-        
+
         return predicted_numbers, confidence_scores
 
 
@@ -3830,6 +3792,8 @@ class TransformerPredictor:
         self.num_heads = 8
         self.num_layers = 3
         self.max_seq_length = 20
+        self.sequence_length = 10
+        self.validation_jaccard_score = 0.0
 
     def predict(self, data: pd.DataFrame, count: int = 30, **kwargs) -> Tuple[List[int], List[float]]:
         """Transformer预测"""
@@ -3843,13 +3807,16 @@ class TransformerPredictor:
             from torch.utils.data import DataLoader, TensorDataset
 
             # 检查是否有足够的数据
-            if len(data) < 10:
+            if len(data) < self.sequence_length + 2:
                 print("⚠️ 数据不足，使用频率分析作为后备")
                 frequency_predictor = FrequencyPredictor(self.analyzer)
                 return frequency_predictor.predict(data, count)
 
             # 准备训练数据
-            sequences, targets = self._prepare_sequences(data)
+            sequences, targets = self._prepare_sequences(
+                data,
+                seq_length=self.sequence_length,
+            )
 
             if len(sequences) == 0:
                 print("⚠️ 无法构建序列，使用频率分析作为后备")
@@ -3858,21 +3825,32 @@ class TransformerPredictor:
 
             # 构建和训练模型
             device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+            torch.manual_seed(42)
             print(f"使用设备: {device}")
 
             model = self._build_transformer_model().to(device)
 
             # 训练模型
-            self._train_model(model, sequences, targets, device)
+            self.validation_jaccard_score = self._train_model(
+                model,
+                sequences,
+                targets,
+                device,
+            )
 
             # 预测
+            prediction_sequence = self._build_latest_sequence(
+                data,
+                seq_length=self.sequence_length,
+            )
             predicted_numbers, confidence_scores = self._predict_with_model(
-                model, sequences, device, count
+                model, prediction_sequence, device, count
             )
 
             print(f"✅ Transformer预测完成")
             print(f"预测号码: {predicted_numbers[:10]}...")
-            print(f"平均置信度: {np.mean(confidence_scores):.3f}")
+            print(f"尾段验证Jaccard: {self.validation_jaccard_score:.3f}")
+            print(f"平均排序分: {np.mean(confidence_scores):.3f}")
 
             return predicted_numbers, confidence_scores
 
@@ -3885,20 +3863,19 @@ class TransformerPredictor:
             frequency_predictor = FrequencyPredictor(self.analyzer)
             return frequency_predictor.predict(data, count)
 
-    def _prepare_sequences(self, data: pd.DataFrame):
+    def _prepare_sequences(self, data: pd.DataFrame, seq_length: int = 10):
         """准备序列数据"""
         sequences = []
         targets = []
 
         # 将每期号码转换为序列
         all_numbers = []
-        for _, row in data.iterrows():
-            numbers = [int(row[f'num{i}']) for i in range(1, 21)]
+        ordered_data = ensure_oldest_first(data)
+        for _, row in ordered_data.iterrows():
+            numbers = extract_row_numbers(row)
             all_numbers.append(numbers)
 
         # 创建滑动窗口序列
-        seq_length = 10  # 使用前10期预测下一期
-
         for i in range(len(all_numbers) - seq_length):
             # 输入序列：前seq_length期的号码
             input_seq = []
@@ -3912,6 +3889,18 @@ class TransformerPredictor:
             targets.append(target)
 
         return sequences, targets
+
+    def _build_latest_sequence(self, data: pd.DataFrame, seq_length: int = 10) -> List[int]:
+        """构造用于预测下一期的最新Transformer输入序列。"""
+        ordered_data = ensure_oldest_first(data)
+        if len(ordered_data) < seq_length:
+            raise ValueError("构造Transformer预测窗口的数据不足")
+
+        input_seq = []
+        for _, row in ordered_data.tail(seq_length).iterrows():
+            input_seq.extend(extract_row_numbers(row))
+
+        return input_seq
 
     def _build_transformer_model(self):
         """构建Transformer模型"""
@@ -3983,19 +3972,17 @@ class TransformerPredictor:
 
         print("开始训练Transformer模型...")
 
-        # 准备数据
-        X = torch.tensor(sequences, dtype=torch.long).to(device)
-
-        # 将目标转换为多标签格式
-        y = torch.zeros(len(targets), 80).to(device)
-        for i, target_numbers in enumerate(targets):
-            for num in target_numbers:
-                if 1 <= num <= 80:
-                    y[i, num - 1] = 1.0
+        X_array, y_array = self._encode_training_arrays(sequences, targets)
+        X_train, X_val, y_train, y_val = split_time_series_tail_validation(
+            X_array,
+            y_array,
+        )
 
         # 创建数据加载器
-        dataset = TensorDataset(X, y)
-        dataloader = DataLoader(dataset, batch_size=16, shuffle=True)
+        X_train_tensor = torch.tensor(X_train, dtype=torch.long).to(device)
+        y_train_tensor = torch.tensor(y_train, dtype=torch.float32).to(device)
+        dataset = TensorDataset(X_train_tensor, y_train_tensor)
+        dataloader = DataLoader(dataset, batch_size=16, shuffle=False)
 
         # 优化器和损失函数
         optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
@@ -4022,27 +4009,46 @@ class TransformerPredictor:
                 avg_loss = total_loss / len(dataloader)
                 print(f"Epoch {epoch + 1}/{num_epochs}, Loss: {avg_loss:.4f}")
 
-        print("Transformer模型训练完成")
+        X_val_tensor = torch.tensor(X_val, dtype=torch.long).to(device)
+        model.eval()
+        with torch.no_grad():
+            validation_predictions = model(X_val_tensor).cpu().numpy()
 
-    def _predict_with_model(self, model, sequences, device, count):
+        validation_jaccard = calculate_multilabel_jaccard_score(
+            y_val,
+            validation_predictions,
+            top_k=DRAW_NUMBER_COUNT,
+        )
+        print(f"Transformer模型训练完成，尾段验证Jaccard: {validation_jaccard:.3f}")
+        return validation_jaccard
+
+    def _encode_training_arrays(self, sequences, targets) -> Tuple[np.ndarray, np.ndarray]:
+        """把Transformer序列和目标编码为可按时间切分的数组。"""
+        X = np.asarray(sequences, dtype=int)
+        y = np.zeros((len(targets), 80), dtype=float)
+        for i, target_numbers in enumerate(targets):
+            for num in target_numbers:
+                if 1 <= num <= 80:
+                    y[i, num - 1] = 1.0
+        return X, y
+
+    def _predict_with_model(self, model, prediction_sequence, device, count):
         """使用训练好的模型进行预测"""
         import torch
 
         model.eval()
 
-        # 使用最后一个序列进行预测
-        if len(sequences) > 0:
-            last_seq = torch.tensor([sequences[-1]], dtype=torch.long).to(device)
-        else:
-            # 创建随机序列作为后备
-            last_seq = torch.randint(1, 81, (1, 200)).to(device)
+        if not prediction_sequence:
+            raise ValueError("缺少Transformer预测窗口")
+
+        last_seq = torch.tensor([prediction_sequence], dtype=torch.long).to(device)
 
         with torch.no_grad():
             probabilities = model(last_seq)[0].cpu().numpy()
 
         # 选择概率最高的号码
         number_probs = [(i + 1, prob) for i, prob in enumerate(probabilities)]
-        number_probs.sort(key=lambda x: x[1], reverse=True)
+        number_probs.sort(key=lambda x: (-x[1], x[0]))
 
         predicted_numbers = [num for num, _ in number_probs[:count]]
         confidence_scores = [float(prob) for _, prob in number_probs[:count]]
@@ -4056,6 +4062,7 @@ class GraphNeuralNetworkPredictor:
     def __init__(self, analyzer):
         self.analyzer = analyzer
         self.model = None
+        self.validation_jaccard_score = 0.0
 
     def predict(self, data: pd.DataFrame, count: int = 30, **kwargs) -> Tuple[List[int], List[float]]:
         """图传播预测"""
@@ -4081,7 +4088,7 @@ class GraphNeuralNetworkPredictor:
             device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
             print(f"使用设备: {device}")
 
-            score_weights = self._train_gnn_model(train_samples)
+            score_weights, self.validation_jaccard_score = self._train_gnn_model(train_samples)
 
             # 只使用当前可见历史构建预测图，避免把目标期结果泄露进特征。
             adjacency_matrix, node_features = self._build_number_graph(newest_first_data)
@@ -4092,7 +4099,8 @@ class GraphNeuralNetworkPredictor:
 
             print(f"✅ 图传播预测完成")
             print(f"预测号码: {predicted_numbers[:10]}...")
-            print(f"平均置信度: {np.mean(confidence_scores):.3f}")
+            print(f"尾段验证Jaccard: {self.validation_jaccard_score:.3f}")
+            print(f"平均排序分: {np.mean(confidence_scores):.3f}")
 
             return predicted_numbers, confidence_scores
 
@@ -4245,10 +4253,14 @@ class GraphNeuralNetworkPredictor:
 
         X = np.vstack([sample_scores for sample_scores, _ in train_samples])
         y = np.vstack([target_vector for _, target_vector in train_samples])
+        X_train, X_val, y_train, y_val = split_time_series_tail_validation(X, y)
 
-        positive_mean = (X * y).sum(axis=0) / (y.sum(axis=0) + 1e-9)
-        negative_mask = 1.0 - y
-        negative_mean = (X * negative_mask).sum(axis=0) / (negative_mask.sum(axis=0) + 1e-9)
+        positive_mean = (X_train * y_train).sum(axis=0) / (y_train.sum(axis=0) + 1e-9)
+        negative_mask = 1.0 - y_train
+        negative_mean = (
+            (X_train * negative_mask).sum(axis=0)
+            / (negative_mask.sum(axis=0) + 1e-9)
+        )
         weights = positive_mean - negative_mean
 
         weights = weights - np.min(weights)
@@ -4258,8 +4270,18 @@ class GraphNeuralNetworkPredictor:
         else:
             weights = np.ones(80)
 
-        print(f"图传播训练样本: {len(train_samples)}个")
-        return weights
+        validation_scores = X_val * (0.5 + 0.5 * weights)
+        validation_jaccard = calculate_multilabel_jaccard_score(
+            y_val,
+            validation_scores,
+            top_k=DRAW_NUMBER_COUNT,
+        )
+
+        print(
+            f"图传播训练样本: {len(X_train)}个，验证样本: {len(X_val)}个，"
+            f"尾段验证Jaccard: {validation_jaccard:.3f}"
+        )
+        return weights, validation_jaccard
 
     def _propagate_graph_scores(self, adjacency_matrix, node_features):
         """执行确定性两跳图传播，返回80个号码的结构分数。"""
@@ -4283,6 +4305,15 @@ class GraphNeuralNetworkPredictor:
 
     def _predict_with_gnn(self, score_weights, adjacency_matrix, node_features, count):
         """使用确定性图传播评分进行预测。"""
+        if isinstance(score_weights, dict):
+            score_weights = score_weights.get('weights', np.ones(80))
+        elif isinstance(score_weights, tuple):
+            score_weights = score_weights[0]
+
+        score_weights = np.asarray(score_weights, dtype=float)
+        if score_weights.shape != (80,):
+            raise ValueError("图传播评分权重必须包含80个号码权重")
+
         propagated_scores = self._propagate_graph_scores(adjacency_matrix, node_features)
         probabilities = propagated_scores * (0.5 + 0.5 * score_weights)
         number_scores = {i + 1: float(score) for i, score in enumerate(probabilities)}
@@ -4656,21 +4687,21 @@ class ClusteringPredictor:
 
 
 class AdvancedEnsemblePredictor:
-    """自适应集成学习预测器 - 2000轮集成训练"""
+    """时间序列验证加权的多输出集成预测器"""
 
     def __init__(self, analyzer):
         self.analyzer = analyzer
         self.num_rounds = 2000
+        self.window_size = 5
+        self.validation_jaccard_scores: Dict[str, float] = {}
 
     def predict(self, data: pd.DataFrame, count: int = 30, **kwargs) -> Tuple[List[int], List[float]]:
         """自适应集成学习预测"""
         print(f"🔄 执行自适应集成学习预测...")
-        print(f"分析数据: {len(data)}期，集成轮数: {self.num_rounds}")
+        print(f"分析数据: {len(data)}期")
 
         try:
             from sklearn.ensemble import RandomForestClassifier
-            from sklearn.svm import SVC
-            from sklearn.model_selection import cross_val_score
 
             # 准备训练数据
             X, y = self._prepare_ensemble_data(data)
@@ -4680,20 +4711,24 @@ class AdvancedEnsemblePredictor:
                 frequency_predictor = FrequencyPredictor(self.analyzer)
                 return frequency_predictor.predict(data, count)
 
-            # 多模型融合训练
-            ensemble_results = self._train_ensemble_models(X, y)
+            X_train, X_val, y_train, y_val = split_time_series_tail_validation(X, y)
 
-            # 自适应权重更新
-            model_weights = self._calculate_adaptive_weights(ensemble_results, X, y)
+            # 多模型融合训练
+            ensemble_results = self._train_ensemble_models(X_train, y_train)
+
+            # 使用时间后段验证集计算权重，避免训练集内评估。
+            model_weights = self._calculate_adaptive_weights(ensemble_results, X_val, y_val)
 
             # 集成预测
+            prediction_features = self._build_prediction_features(data)
             predicted_numbers, confidence_scores = self._ensemble_predict(
-                ensemble_results, model_weights, X, count
+                ensemble_results, model_weights, prediction_features, count
             )
 
             print(f"✅ 自适应集成学习预测完成")
             print(f"预测号码: {predicted_numbers[:10]}...")
-            print(f"平均置信度: {np.mean(confidence_scores):.3f}")
+            print(f"尾段验证Jaccard: {self.validation_jaccard_scores}")
+            print(f"平均排序分: {np.mean(confidence_scores):.3f}")
 
             return predicted_numbers, confidence_scores
 
@@ -4712,25 +4747,16 @@ class AdvancedEnsemblePredictor:
         y = []
 
         # 使用滑动窗口创建训练样本
-        window_size = 5
+        window_size = self.window_size
 
-        for i in range(window_size, len(data)):
+        ordered_data = ensure_oldest_first(data)
+        for i in range(window_size, len(ordered_data)):
             # 特征：前window_size期的统计信息
-            features = []
-
-            for j in range(window_size):
-                period_data = data.iloc[i - window_size + j]
-                numbers = [int(period_data[f'num{k}']) for k in range(1, 21)]
-
-                # 期间特征
-                features.extend([
-                    sum(numbers) / 20,  # 平均值
-                    len([n for n in numbers if n % 2 == 1]) / 20,  # 奇数比
-                    len([n for n in numbers if n > 40]) / 20,  # 大号比
-                ])
+            history_window = ordered_data.iloc[i - window_size:i]
+            features = self._extract_window_features(history_window)
 
             # 目标：当前期的号码（多标签）
-            current_numbers = [int(data.iloc[i][f'num{k}']) for k in range(1, 21)]
+            current_numbers = extract_row_numbers(ordered_data.iloc[i])
             target = [0] * 80
             for num in current_numbers:
                 target[num - 1] = 1
@@ -4739,6 +4765,28 @@ class AdvancedEnsemblePredictor:
             y.append(target)
 
         return np.array(X), np.array(y)
+
+    def _extract_window_features(self, window_data: pd.DataFrame) -> List[float]:
+        """把连续历史窗口编码为集成模型特征。"""
+        features = []
+        for _, period_data in window_data.iterrows():
+            numbers = extract_row_numbers(period_data)
+            features.extend([
+                sum(numbers) / DRAW_NUMBER_COUNT,
+                len([n for n in numbers if n % 2 == 1]) / DRAW_NUMBER_COUNT,
+                len([n for n in numbers if n > 40]) / DRAW_NUMBER_COUNT,
+            ])
+        return features
+
+    def _build_prediction_features(self, data: pd.DataFrame, window_size: Optional[int] = None) -> np.ndarray:
+        """用最新历史窗口构造下一期预测特征。"""
+        window_size = self.window_size if window_size is None else window_size
+        ordered_data = ensure_oldest_first(data)
+        if len(ordered_data) < window_size:
+            raise ValueError("构造集成学习预测窗口的数据不足")
+
+        features = self._extract_window_features(ordered_data.tail(window_size))
+        return np.array(features, dtype=float).reshape(1, -1)
 
     def _train_ensemble_models(self, X, y):
         """训练多个基础模型"""
@@ -4776,27 +4824,20 @@ class AdvancedEnsemblePredictor:
 
     def _calculate_adaptive_weights(self, models, X, y):
         """计算自适应权重"""
-        from sklearn.model_selection import cross_val_score
-        from sklearn.metrics import accuracy_score
-
         weights = {}
+        self.validation_jaccard_scores = {}
 
         for name, model in models.items():
             try:
-                # 使用交叉验证评估模型性能
-                # 由于是多标签问题，使用简化的评估方法
-                predictions = model.predict(X)
-
-                # 计算平均准确率
-                accuracies = []
-                for i in range(y.shape[1]):  # 对每个输出维度
-                    acc = accuracy_score(y[:, i], predictions[:, i])
-                    accuracies.append(acc)
-
-                avg_accuracy = np.mean(accuracies)
-                weights[name] = max(avg_accuracy, 0.1)  # 最小权重0.1
-
-                print(f"{name} 平均准确率: {avg_accuracy:.3f}")
+                predictions = self._extract_positive_probability_matrix(model, X)
+                avg_similarity = calculate_multilabel_jaccard_score(
+                    y,
+                    predictions,
+                    top_k=DRAW_NUMBER_COUNT,
+                )
+                self.validation_jaccard_scores[name] = avg_similarity
+                weights[name] = max(float(avg_similarity), 0.05)
+                print(f"{name} 验证集Jaccard相似度: {avg_similarity:.3f}")
 
             except Exception as e:
                 print(f"⚠️ {name} 权重计算失败: {e}")
@@ -4810,20 +4851,49 @@ class AdvancedEnsemblePredictor:
         print(f"模型权重: {weights}")
         return weights
 
-    def _ensemble_predict(self, models, weights, X, count):
+    def _extract_positive_probability_matrix(self, model, samples) -> np.ndarray:
+        """批量提取MultiOutputClassifier每个号码为正类的排序分。"""
+        sample_array = np.asarray(samples, dtype=float)
+        if sample_array.ndim == 1:
+            sample_array = sample_array.reshape(1, -1)
+
+        if not hasattr(model, 'predict_proba'):
+            prediction = model.predict(sample_array)
+            return np.asarray(prediction, dtype=float)
+
+        probabilities = model.predict_proba(sample_array)
+        if len(probabilities) != 80:
+            prediction = model.predict(sample_array)
+            return np.asarray(prediction, dtype=float)
+
+        class_labels = getattr(model, 'classes_', [None] * len(probabilities))
+        scores = []
+        for output_index, output_proba in enumerate(probabilities):
+            labels = class_labels[output_index]
+            if labels is not None and 1 in labels:
+                positive_index = list(labels).index(1)
+                scores.append(output_proba[:, positive_index])
+            elif output_proba.shape[1] > 1:
+                scores.append(output_proba[:, 1])
+            else:
+                scores.append(np.zeros(sample_array.shape[0]))
+
+        return np.column_stack(scores).astype(float)
+
+    def _extract_positive_probabilities(self, model, samples) -> np.ndarray:
+        """提取单样本80维正类排序分，保留旧内部调用语义。"""
+        probabilities = self._extract_positive_probability_matrix(model, samples)
+        if probabilities.shape[0] == 1:
+            return probabilities[0]
+        return probabilities
+
+    def _ensemble_predict(self, models, weights, last_sample, count):
         """集成预测"""
         if not models:
-            print("⚠️ 没有可用模型，使用频率分析")
-            frequency_predictor = FrequencyPredictor(self.analyzer)
-            return frequency_predictor.predict(pd.DataFrame(), count)
+            raise ValueError("没有可用的集成模型")
 
-        # 构建预测特征：基于历史数据的统计特征
-        if len(X) > 0:
-            # 使用最后一个样本的特征
-            last_sample = X[-1:].reshape(1, -1)
-        else:
-            # 如果没有训练数据，创建默认特征
-            last_sample = np.zeros((1, 15))  # 5个窗口 * 3个特征
+        if last_sample is None or np.size(last_sample) == 0:
+            raise ValueError("缺少集成学习预测特征")
 
         print(f"预测特征维度: {last_sample.shape}")
 
@@ -4836,21 +4906,8 @@ class AdvancedEnsemblePredictor:
                 # 对每个号码进行二分类预测
                 model_predictions = np.zeros(80)
 
-                # 如果是多输出模型，直接预测
                 if hasattr(model, 'predict'):
-                    prediction = model.predict(last_sample)[0]
-                    if len(prediction) == 80:
-                        model_predictions = prediction
-                    else:
-                        # 如果预测维度不匹配，使用概率预测
-                        if hasattr(model, 'predict_proba'):
-                            proba = model.predict_proba(last_sample)
-                            if len(proba) == 80:
-                                model_predictions = [p[1] if len(p) > 1 else p[0] for p in proba]
-                            else:
-                                model_predictions = np.random.random(80)
-                        else:
-                            model_predictions = np.random.random(80)
+                    model_predictions = self._extract_positive_probabilities(model, last_sample)
 
                 weight = weights.get(name, 0.1)
                 ensemble_predictions += np.array(model_predictions) * weight
@@ -4860,29 +4917,14 @@ class AdvancedEnsemblePredictor:
 
             except Exception as e:
                 print(f"⚠️ {name} 预测失败: {e}")
-                # 使用随机预测作为后备
-                weight = weights.get(name, 0.1)
-                ensemble_predictions += np.random.random(80) * weight * 0.1
+                continue
 
         if successful_predictions == 0:
-            print("⚠️ 所有模型预测失败，使用随机预测")
-            ensemble_predictions = np.random.random(80)
+            raise ValueError("所有集成模型预测失败")
 
         # 选择概率最高的号码
-        number_probs = [(i + 1, prob) for i, prob in enumerate(ensemble_predictions)]
-        number_probs.sort(key=lambda x: x[1], reverse=True)
-
-        predicted_numbers = [num for num, _ in number_probs[:count]]
-        confidence_scores = [float(prob) for _, prob in number_probs[:count]]
-
-        # 归一化置信度到0-1范围
-        if confidence_scores and max(confidence_scores) > 0:
-            max_conf = max(confidence_scores)
-            confidence_scores = [conf / max_conf for conf in confidence_scores]
-        else:
-            confidence_scores = [0.1] * len(predicted_numbers)
-
-        return predicted_numbers, confidence_scores
+        number_scores = {i + 1: float(prob) for i, prob in enumerate(ensemble_predictions)}
+        return rank_number_scores(number_scores, count)
 
 
 class BayesianPredictor:
@@ -4965,7 +5007,7 @@ class BayesianPredictor:
 
 
 class SuperPredictor:
-    """超级预测器 - 所有算法的智能融合"""
+    """综合排序融合器 - 汇总多种独立评分信号"""
 
     def __init__(self, analyzer):
         self.analyzer = analyzer
@@ -4981,86 +5023,87 @@ class SuperPredictor:
             'advanced_ensemble': AdvancedEnsemblePredictor(analyzer),
             'bayesian': BayesianPredictor(analyzer)
         }
+        self.predictor_groups = {
+            'frequency': 'statistical',
+            'hot_cold': 'statistical',
+            'missing': 'statistical',
+            'adaptive_markov': 'temporal',
+            'transformer': 'deep_sequence',
+            'gnn': 'graph',
+            'monte_carlo': 'simulation',
+            'clustering': 'structure',
+            'advanced_ensemble': 'ml',
+            'bayesian': 'bayesian',
+        }
+        self.group_weights = {
+            'statistical': 0.18,
+            'temporal': 0.16,
+            'deep_sequence': 0.10,
+            'graph': 0.10,
+            'simulation': 0.12,
+            'structure': 0.10,
+            'ml': 0.14,
+            'bayesian': 0.10,
+        }
 
     def predict(self, data: pd.DataFrame, count: int = 30, **kwargs) -> Tuple[List[int], List[float]]:
-        """超级预测器 - 15+种算法智能融合"""
-        print(f"🔄 执行超级预测器...")
+        """综合排序融合器。"""
+        print(f"🔄 执行综合排序融合器...")
         print(f"分析数据: {len(data)}期，融合算法: {len(self.predictors)}种")
 
         # 收集所有预测结果
         all_predictions = {}
         all_confidences = {}
-        execution_times = {}
 
         for name, predictor in self.predictors.items():
             try:
-                import time
-                start_time = time.time()
-
                 numbers, confidences = predictor.predict(data, count * 2)  # 获取更多候选
-
-                execution_time = time.time() - start_time
+                if not numbers:
+                    continue
 
                 all_predictions[name] = numbers
                 all_confidences[name] = confidences
-                execution_times[name] = execution_time
 
-                print(f"✅ {name}: {len(numbers)}个号码, 平均置信度={np.mean(confidences):.3f}, 耗时={execution_time:.2f}s")
+                print(f"✅ {name}: {len(numbers)}个号码, 平均排序分={np.mean(confidences):.3f}")
 
             except Exception as e:
                 print(f"⚠️ {name} 预测失败: {e}")
                 continue
 
         # 动态权重分配
-        weights = self._calculate_dynamic_weights(all_predictions, all_confidences, execution_times, data)
+        weights = self._calculate_dynamic_weights(all_predictions, all_confidences, data)
 
         # 智能融合
         final_numbers, final_confidences = self._intelligent_fusion(
             all_predictions, all_confidences, weights, count
         )
 
-        print(f"✅ 超级预测器完成")
+        print(f"✅ 综合排序融合完成")
         print(f"融合了 {len([w for w in weights.values() if w > 0])} 个有效预测器")
         print(f"预测号码: {final_numbers[:10]}...")
         print(f"平均置信度: {np.mean(final_confidences):.3f}")
 
         return final_numbers, final_confidences
 
-    def _calculate_dynamic_weights(self, all_predictions, all_confidences, execution_times, data):
-        """计算动态权重"""
+    def _calculate_dynamic_weights(self, all_predictions, all_confidences, data):
+        """按算法信号组分配权重，避免同类fallback重复放大。"""
+        active_by_group: Dict[str, List[str]] = {}
+        for name in all_predictions:
+            group = self.predictor_groups.get(name, name)
+            active_by_group.setdefault(group, []).append(name)
+
         weights = {}
+        for group, names in active_by_group.items():
+            group_weight = self.group_weights.get(group, 0.05)
+            per_model_weight = group_weight / len(names)
+            for name in names:
+                weights[name] = per_model_weight
 
-        for name in all_predictions.keys():
-            weight = 1.0
-
-            # 基于置信度的权重
-            if name in all_confidences:
-                avg_confidence = np.mean(all_confidences[name])
-                weight *= (1.0 + avg_confidence)
-
-            # 基于执行时间的权重（快速算法获得轻微加分）
-            if name in execution_times:
-                exec_time = execution_times[name]
-                time_factor = 1.0 / (1.0 + exec_time / 10.0)  # 10秒以内的算法获得加分
-                weight *= time_factor
-
-            # 基于数据量的权重调整
-            data_size = len(data)
-            if name in ['transformer', 'gnn', 'advanced_ensemble']:
-                # 深度学习方法在数据充足时权重更高
-                weight *= min(2.0, data_size / 50.0)
-            elif name in ['frequency', 'hot_cold']:
-                # 简单方法在数据不足时权重更高
-                weight *= max(0.5, 2.0 - data_size / 50.0)
-
-            weights[name] = weight
-
-        # 归一化权重
         total_weight = sum(weights.values())
         if total_weight > 0:
             weights = {k: v / total_weight for k, v in weights.items()}
 
-        print(f"动态权重分配: {weights}")
+        print(f"融合权重分配: {weights}")
         return weights
 
     def _intelligent_fusion(self, all_predictions, all_confidences, weights, count):
@@ -5080,34 +5123,21 @@ class SuperPredictor:
                     number_scores[number] = 0
                 number_scores[number] += weighted_score
 
-        # 按加权得分排序
-        sorted_numbers = sorted(number_scores.items(), key=lambda x: x[1], reverse=True)
-
-        # 选择前count个号码
-        final_numbers = [num for num, score in sorted_numbers[:count]]
-        final_confidences = [score for num, score in sorted_numbers[:count]]
-
-        # 归一化置信度
-        if final_confidences:
-            max_conf = max(final_confidences)
-            if max_conf > 0:
-                final_confidences = [conf / max_conf for conf in final_confidences]
-
-        return final_numbers, final_confidences
+        return rank_number_scores(number_scores, count)
 
 
 class HighConfidencePredictor:
-    """高置信度预测系统 - 选择性预测机制"""
+    """质量门控预测器 - 只在排序结果结构稳定时输出"""
 
     def __init__(self, analyzer):
         self.analyzer = analyzer
-        self.confidence_threshold = 0.90  # 90%置信度阈值
+        self.confidence_threshold = 0.72  # 质量门控阈值，不是命中概率。
         self.super_predictor = SuperPredictor(analyzer)
 
     def predict(self, data: pd.DataFrame, count: int = 30, **kwargs) -> Tuple[List[int], List[float]]:
-        """高置信度预测 - 只在高置信度时输出"""
-        print(f"🔄 执行高置信度预测系统...")
-        print(f"置信度阈值: {self.confidence_threshold:.1%}")
+        """质量门控预测 - 只在评分结构达标时输出。"""
+        print(f"🔄 执行质量门控预测系统...")
+        print(f"质量门控阈值: {self.confidence_threshold:.1%}")
 
         # 使用超级预测器获得初始预测
         numbers, confidences = self.super_predictor.predict(data, count)
@@ -5121,7 +5151,7 @@ class HighConfidencePredictor:
         # 综合置信度计算
         overall_confidence = self._calculate_overall_confidence(confidence_dimensions, validation_results)
 
-        print(f"综合置信度: {overall_confidence:.1%}")
+        print(f"综合质量分: {overall_confidence:.1%}")
 
         if overall_confidence >= self.confidence_threshold:
             print(f"✅ 置信度达标，输出预测结果")
@@ -5148,9 +5178,9 @@ class HighConfidencePredictor:
         pattern_strength = self._calculate_pattern_strength(data)
         dimensions['pattern_strength'] = pattern_strength
 
-        # 4. 历史验证
-        historical_accuracy = self._calculate_historical_accuracy(data, numbers)
-        dimensions['historical_accuracy'] = historical_accuracy
+        # 4. 历史重叠基线：仅衡量候选集合与历史频率结构的一致性，不代表回测准确率。
+        historical_overlap = self._calculate_historical_accuracy(data, numbers)
+        dimensions['historical_accuracy'] = historical_overlap
 
         # 5. 统计显著性
         statistical_significance = self._calculate_statistical_significance(data, numbers)
@@ -5182,29 +5212,16 @@ class HighConfidencePredictor:
         return pattern_strength
 
     def _calculate_historical_accuracy(self, data, predicted_numbers):
-        """计算历史准确性"""
+        """计算候选号码与历史频率结构的一致性。"""
         if len(data) < 5:
             return 0.5
 
-        # 使用前80%的数据训练，后20%验证
-        split_point = int(len(data) * 0.8)
-        train_data = data.iloc[:split_point]
-        test_data = data.iloc[split_point:]
+        frequency = FrequencyPredictor(self.analyzer)._calculate_frequency(ensure_newest_first(data))
+        if not predicted_numbers:
+            return 0.0
 
-        if len(test_data) == 0:
-            return 0.5
-
-        # 简化的历史验证
-        total_accuracy = 0
-        for _, test_row in test_data.iterrows():
-            actual_numbers = [int(test_row[f'num{i}']) for i in range(1, 21)]
-
-            # 计算预测号码与实际号码的重叠度
-            overlap = len(set(predicted_numbers) & set(actual_numbers))
-            accuracy = overlap / min(len(predicted_numbers), len(actual_numbers))
-            total_accuracy += accuracy
-
-        return total_accuracy / len(test_data)
+        avg_frequency = np.mean([frequency.get(num, 0.0) for num in predicted_numbers])
+        return float(min(1.0, avg_frequency / max(THEORETICAL_SINGLE_PROBABILITY, 1e-9)))
 
     def _calculate_statistical_significance(self, data, predicted_numbers):
         """计算统计显著性"""
@@ -5381,7 +5398,7 @@ class HighConfidencePredictor:
 
 class EnsemblePredictor:
     """集成学习预测器"""
-    
+
     def __init__(self, analyzer):
         self.analyzer = analyzer
         self.base_predictors = {
@@ -5390,15 +5407,15 @@ class EnsemblePredictor:
             'missing': MissingPredictor(analyzer),
             'markov': MarkovPredictor(analyzer)
         }
-    
+
     def predict(self, data: pd.DataFrame, count: int = 30, **kwargs) -> Tuple[List[int], List[float]]:
         """集成预测"""
         print("执行集成学习预测...")
-        
+
         # 收集各个预测器的结果
         all_predictions = {}
         weights = {'frequency': 0.3, 'hot_cold': 0.25, 'missing': 0.2, 'markov': 0.25}
-        
+
         for name, predictor in self.base_predictors.items():
             try:
                 numbers, scores = predictor.predict(data, count=count * 2)  # 获取更多候选
@@ -5406,29 +5423,29 @@ class EnsemblePredictor:
             except Exception as e:
                 print(f"预测器 {name} 执行失败: {e}")
                 all_predictions[name] = []
-        
+
         # 融合预测结果
         final_scores = {}
-        
+
         for name, predictions in all_predictions.items():
             weight = weights.get(name, 0.1)
             for num, score in predictions:
                 if num not in final_scores:
                     final_scores[num] = 0
                 final_scores[num] += weight * score
-        
+
         # 排序并选择前count个
         sorted_predictions = sorted(final_scores.items(), key=lambda x: x[1], reverse=True)
-        
+
         predicted_numbers = [num for num, _ in sorted_predictions[:count]]
         confidence_scores = [score for _, score in sorted_predictions[:count]]
-        
+
         return predicted_numbers, confidence_scores
 
 
 class PredictionEngine:
     """预测引擎"""
-    
+
     def __init__(self, analyzer):
         self.analyzer = analyzer
         self.predictors = {
@@ -5450,7 +5467,7 @@ class PredictionEngine:
             'lstm': LSTMPredictor(analyzer),
             'ensemble': EnsemblePredictor(analyzer)
         }
-    
+
     def predict(self,
                 data: pd.DataFrame,
                 target_issue: str,
@@ -5458,12 +5475,12 @@ class PredictionEngine:
                 method: str,
                 **kwargs) -> PredictionResult:
         """执行预测"""
-        
+
         if method not in self.predictors:
             raise ValueError(f"不支持的预测方法: {method}")
-        
+
         predictor = self.predictors[method]
-        
+
         # 执行预测
         start_time = time.time()
         predicted_numbers, confidence_scores = predictor.predict(
@@ -5472,7 +5489,7 @@ class PredictionEngine:
             **kwargs
         )
         execution_time = time.time() - start_time
-        
+
         return PredictionResult(
             target_issue=target_issue,
             analysis_periods=len(data),
@@ -5483,7 +5500,7 @@ class PredictionEngine:
             execution_time=execution_time,
             parameters=kwargs
         )
-    
+
     def get_available_methods(self) -> List[str]:
         """获取可用的预测方法"""
         return list(self.predictors.keys())
@@ -5491,27 +5508,27 @@ class PredictionEngine:
 
 class ComparisonEngine:
     """结果对比引擎"""
-    
+
     def __init__(self, analyzer):
         self.analyzer = analyzer
-    
+
     def compare(self,
                 target_issue: str,
                 predicted_numbers: List[int],
                 actual_numbers: List[int]) -> ComparisonResult:
         """对比预测结果"""
-        
+
         # 计算命中情况
         hit_numbers = [num for num in predicted_numbers if num in actual_numbers]
         miss_numbers = [num for num in predicted_numbers if num not in actual_numbers]
-        
+
         hit_count = len(hit_numbers)
         total_predicted = len(predicted_numbers)
         hit_rate = hit_count / total_predicted if total_predicted > 0 else 0
-        
+
         # 分析命中分布
         hit_distribution = self._analyze_hit_distribution(hit_numbers)
-        
+
         return ComparisonResult(
             target_issue=target_issue,
             predicted_numbers=predicted_numbers,
@@ -5524,7 +5541,7 @@ class ComparisonEngine:
             hit_distribution=hit_distribution,
             comparison_time=datetime.now()
         )
-    
+
     def _analyze_hit_distribution(self, hit_numbers: List[int]) -> Dict[str, int]:
         """分析命中分布"""
         distribution = {
@@ -5533,24 +5550,24 @@ class ComparisonEngine:
             'odd_numbers': sum(1 for n in hit_numbers if n % 2 == 1),
             'even_numbers': sum(1 for n in hit_numbers if n % 2 == 0)
         }
-        
+
         # 区域分布
         for i in range(8):
             start = i * 10 + 1
             end = (i + 1) * 10
             zone_hits = sum(1 for n in hit_numbers if start <= n <= end)
             distribution[f'zone_{i+1}'] = zone_hits
-        
+
         return distribution
 
 
 class PerformanceMonitor:
     """性能监控器"""
-    
+
     def __init__(self):
         self.prediction_history = []
         self.performance_stats = {}
-    
+
     def record_prediction(self, method: str, execution_time: float, hit_rate: float = None):
         """记录预测性能"""
         record = {
@@ -5560,7 +5577,7 @@ class PerformanceMonitor:
             'timestamp': datetime.now()
         }
         self.prediction_history.append(record)
-        
+
         # 更新统计信息
         if method not in self.performance_stats:
             self.performance_stats[method] = {
@@ -5569,36 +5586,36 @@ class PerformanceMonitor:
                 'total_hit_rate': 0,
                 'count_with_hit_rate': 0
             }
-        
+
         stats = self.performance_stats[method]
         stats['total_predictions'] += 1
         stats['total_time'] += execution_time
-        
+
         if hit_rate is not None:
             stats['total_hit_rate'] += hit_rate
             stats['count_with_hit_rate'] += 1
-    
+
     def get_performance_summary(self) -> Dict[str, Any]:
         """获取性能摘要"""
         summary = {}
-        
+
         for method, stats in self.performance_stats.items():
             avg_time = stats['total_time'] / stats['total_predictions']
-            avg_hit_rate = (stats['total_hit_rate'] / stats['count_with_hit_rate'] 
+            avg_hit_rate = (stats['total_hit_rate'] / stats['count_with_hit_rate']
                            if stats['count_with_hit_rate'] > 0 else 0)
-            
+
             summary[method] = {
                 'avg_execution_time': avg_time,
                 'avg_hit_rate': avg_hit_rate,
                 'total_predictions': stats['total_predictions']
             }
-        
+
         return summary
 
 
 class Happy8Analyzer:
     """快乐8分析器核心类"""
-    
+
     def __init__(self, data_dir: str = "data"):
         """初始化分析器"""
         self.data_dir = Path(data_dir)
@@ -5607,12 +5624,12 @@ class Happy8Analyzer:
         self.comparison_engine = ComparisonEngine(self)
         self.performance_monitor = PerformanceMonitor()
         self.pair_frequency_analyzer = PairFrequencyAnalyzer(self.data_manager)
-        
+
         # 数据缓存
         self.historical_data = None
-        
+
         print("快乐8智能预测系统初始化完成")
-    
+
     def load_data(self, periods: Optional[int] = None) -> pd.DataFrame:
         """加载历史数据"""
         if self.historical_data is None:
@@ -5671,7 +5688,7 @@ class Happy8Analyzer:
         except Exception as e:
             print(f"爬取所有历史数据失败: {e}")
             return 0
-    
+
     def predict(self,
                 target_issue: str,
                 periods: int = 300,
@@ -5832,40 +5849,40 @@ class Happy8Analyzer:
             return actual_result is not None
         except Exception:
             return False
-    
-    def compare_results(self, 
+
+    def compare_results(self,
                        target_issue: str,
                        predicted_numbers: List[int],
                        is_reference: bool = False) -> ComparisonResult:
         """对比预测结果
-        
+
         Args:
             target_issue: 对比目标期号
             predicted_numbers: 预测号码列表
             is_reference: 是否为参考对比（不记录性能数据）
         """
-        
+
         # 获取开奖结果
         actual_result = self.data_manager.get_issue_result(target_issue)
         if not actual_result:
             raise ValueError(f"未找到期号 {target_issue} 的开奖结果")
-        
+
         # 执行对比
         comparison = self.comparison_engine.compare(
             target_issue=target_issue,
             predicted_numbers=predicted_numbers,
             actual_numbers=actual_result.numbers
         )
-        
+
         # 仅在非参考对比时更新性能记录，避免污染性能指标
         if not is_reference:
             method = getattr(self, '_last_prediction_method', 'unknown')
             self.performance_monitor.record_prediction(
                 method, 0, comparison.hit_rate
             )
-        
+
         return comparison
-    
+
     def analyze_statistics(self, data: pd.DataFrame) -> Dict[str, Any]:
         """分析数据统计信息"""
         if data.empty:
@@ -5911,10 +5928,10 @@ class Happy8Analyzer:
                            method: str = 'frequency',
                            **kwargs) -> Tuple[PredictionResult, ComparisonResult]:
         """分析预测并对比结果"""
-        
+
         # 记录预测方法
         self._last_prediction_method = method
-        
+
         # 执行预测
         prediction_result = self.predict(
             target_issue=target_issue,
@@ -5923,41 +5940,41 @@ class Happy8Analyzer:
             method=method,
             **kwargs
         )
-        
+
         # 对比结果
         comparison_result = self.compare_results(
             target_issue=target_issue,
             predicted_numbers=prediction_result.predicted_numbers
         )
-        
+
         return prediction_result, comparison_result
-    
+
     def get_available_methods(self) -> List[str]:
         """获取可用的预测方法"""
         return self.prediction_engine.get_available_methods()
-    
+
     def get_performance_summary(self) -> Dict[str, Any]:
         """获取性能摘要"""
         return self.performance_monitor.get_performance_summary()
-    
+
     # 数字对频率分析方法
     def analyze_pair_frequency(
-        self, 
-        target_issue: str, 
+        self,
+        target_issue: str,
         period_count: int,
         use_cache: bool = True
     ) -> PairFrequencyResult:
         """
         分析数字对频率
-        
+
         Args:
             target_issue: 目标期号（如"2025238"）
             period_count: 统计期数
             use_cache: 是否使用缓存
-            
+
         Returns:
             完整的分析结果
-            
+
         Example:
             >>> analyzer = Happy8Analyzer()
             >>> result = analyzer.analyze_pair_frequency("2025238", 20)
@@ -5966,70 +5983,70 @@ class Happy8Analyzer:
         return self.pair_frequency_analyzer.analyze_pair_frequency(
             target_issue, period_count, use_cache
         )
-    
+
     def batch_analyze_pair_frequency(
-        self, 
-        requests: List[Tuple[str, int]], 
+        self,
+        requests: List[Tuple[str, int]],
         use_cache: bool = True
     ) -> List[PairFrequencyResult]:
         """
         批量分析数字对频率
-        
+
         Args:
             requests: 请求列表，每个元素为(target_issue, period_count)
             use_cache: 是否使用缓存
-            
+
         Returns:
             分析结果列表
         """
         return self.pair_frequency_analyzer.batch_analyze(requests, use_cache)
-    
+
     def get_top_pairs_across_periods(
-        self, 
-        target_issue: str, 
-        period_counts: List[int], 
+        self,
+        target_issue: str,
+        period_counts: List[int],
         top_n: int = 10
     ) -> Dict[int, List[PairFrequencyItem]]:
         """
         获取不同期数下的前N个高频数字对
-        
+
         Args:
             target_issue: 目标期号
             period_counts: 期数列表
             top_n: 返回前N个数字对
-            
+
         Returns:
             字典，键为期数，值为前N个数字对列表
         """
         return self.pair_frequency_analyzer.get_top_pairs_across_periods(
             target_issue, period_counts, top_n
         )
-    
+
     def find_consistent_pairs(
-        self, 
-        target_issue: str, 
-        period_counts: List[int], 
+        self,
+        target_issue: str,
+        period_counts: List[int],
         min_frequency: float = 30.0
     ) -> List[Tuple[int, int]]:
         """
         查找在不同期数下都保持高频的数字对
-        
+
         Args:
             target_issue: 目标期号
             period_counts: 期数列表
             min_frequency: 最小频率百分比
-            
+
         Returns:
             一致高频的数字对列表
         """
         return self.pair_frequency_analyzer.find_consistent_pairs(
             target_issue, period_counts, min_frequency
         )
-    
+
     def clear_pair_frequency_cache(self):
         """清空数字对频率分析缓存"""
         self.pair_frequency_analyzer.clear_cache()
-    
+
     def get_pair_frequency_cache_info(self) -> Dict[str, Any]:
         """获取数字对频率分析缓存信息"""
         return self.pair_frequency_analyzer.get_cache_info()
@@ -6037,11 +6054,11 @@ class Happy8Analyzer:
 
 class Happy8CLI:
     """快乐8命令行界面"""
-    
+
     def __init__(self):
         self.analyzer = Happy8Analyzer()
         self.parser = self._create_parser()
-    
+
     def _create_parser(self):
         """创建命令行解析器"""
         parser = argparse.ArgumentParser(
@@ -6054,27 +6071,27 @@ class Happy8CLI:
   %(prog)s compare --target 2025238 --periods 300 --count 30 --method ensemble
             """
         )
-        
+
         subparsers = parser.add_subparsers(dest='command', help='可用命令')
-        
+
         # 数据管理命令
         crawl_parser = subparsers.add_parser('crawl', help='爬取历史数据')
         crawl_parser.add_argument('--count', type=int, default=1000, help='爬取期数')
-        
+
         update_parser = subparsers.add_parser('update', help='更新最新数据')
-        
+
         validate_parser = subparsers.add_parser('validate', help='验证数据完整性')
-        
+
         # 预测命令
         predict_parser = subparsers.add_parser('predict', help='执行预测')
         predict_parser.add_argument('--target', required=True, help='目标期号')
         predict_parser.add_argument('--periods', type=int, default=300, help='分析期数')
         predict_parser.add_argument('--count', type=int, default=30, help='生成号码数')
-        predict_parser.add_argument('--method', default='frequency', 
+        predict_parser.add_argument('--method', default='frequency',
                                    choices=['frequency', 'hot_cold', 'markov', 'lstm', 'ensemble'],
                                    help='预测方法')
         predict_parser.add_argument('--explain', action='store_true', help='显示详细过程')
-        
+
         # 对比命令
         compare_parser = subparsers.add_parser('compare', help='预测并对比结果')
         compare_parser.add_argument('--target', required=True, help='目标期号')
@@ -6084,13 +6101,13 @@ class Happy8CLI:
                                    choices=['frequency', 'hot_cold', 'markov', 'lstm', 'ensemble'],
                                    help='预测方法')
         compare_parser.add_argument('--output', help='输出文件路径')
-        
+
         return parser
-    
+
     def run(self, args=None):
         """运行CLI"""
         args = self.parser.parse_args(args)
-        
+
         if args.command == 'crawl':
             self._handle_crawl(args)
         elif args.command == 'update':
@@ -6103,49 +6120,49 @@ class Happy8CLI:
             self._handle_compare(args)
         else:
             self.parser.print_help()
-    
+
     def _handle_crawl(self, args):
         """处理爬取命令"""
         print(f"开始爬取 {args.count} 期历史数据...")
         self.analyzer.data_manager.crawl_initial_data(args.count)
         print("数据爬取完成!")
-    
+
     def _handle_update(self, args):
         """处理更新命令"""
         print("更新最新数据...")
         # 这里可以实现数据更新逻辑
         print("数据更新完成!")
-    
+
     def _handle_validate(self, args):
         """处理验证命令"""
         print("验证数据完整性...")
         data = self.analyzer.load_data()
         validation_result = self.analyzer.data_manager.validator.validate_happy8_data(data)
-        
+
         print(f"验证结果:")
         print(f"- 总记录数: {validation_result['total_records']}")
         print(f"- 重复期号: {validation_result['duplicate_issues']}")
         print(f"- 无效号码范围: {validation_result['invalid_ranges']}")
         print(f"- 无效号码数量: {validation_result['invalid_number_counts']}")
-        
+
         if validation_result['errors']:
             print(f"- 错误: {validation_result['errors']}")
         else:
             print("- 数据验证通过!")
-    
+
     def _handle_predict(self, args):
         """处理预测命令"""
         print("快乐8智能预测系统")
         print("=" * 50)
         print()
-        
+
         print("预测参数:")
         print(f"- 目标期号: {args.target}")
         print(f"- 分析期数: {args.periods}期")
         print(f"- 生成数量: {args.count}个号码")
         print(f"- 预测方法: {args.method}")
         print()
-        
+
         try:
             # 执行预测
             print("正在执行预测... ", end="", flush=True)
@@ -6156,26 +6173,26 @@ class Happy8CLI:
                 method=args.method
             )
             print("✓")
-            
+
             # 显示结果
             self._display_prediction_result(result)
-            
+
         except Exception as e:
             print(f"✗\n错误: {str(e)}")
-    
+
     def _handle_compare(self, args):
         """处理对比命令"""
         print("快乐8智能预测系统")
         print("=" * 50)
         print()
-        
+
         print("预测参数:")
         print(f"- 目标期号: {args.target}")
         print(f"- 分析期数: {args.periods}期")
         print(f"- 生成数量: {args.count}个号码")
         print(f"- 预测方法: {args.method}")
         print()
-        
+
         try:
             # 执行预测和对比
             print("正在执行预测和对比... ", end="", flush=True)
@@ -6186,69 +6203,69 @@ class Happy8CLI:
                 method=args.method
             )
             print("✓")
-            
+
             # 显示结果
             self._display_comparison_results(prediction_result, comparison_result)
-            
+
             # 保存结果
             if args.output:
                 self._save_results(prediction_result, comparison_result, args.output)
                 print(f"\n结果已保存到: {args.output}")
-            
+
         except Exception as e:
             print(f"✗\n错误: {str(e)}")
-    
+
     def _display_prediction_result(self, result: PredictionResult):
         """显示预测结果"""
         print("\n预测结果:")
         print("=" * 50)
-        
+
         # 预测号码
         predicted_numbers = result.predicted_numbers
         print(f"预测号码 ({len(predicted_numbers)}个):")
-        
+
         # 按行显示，每行10个
         for i in range(0, len(predicted_numbers), 10):
             line_numbers = predicted_numbers[i:i+10]
             formatted_numbers = [f"{num:02d}" for num in line_numbers]
             print(" ".join(formatted_numbers))
-        
+
         print(f"\n预测完成! 用时: {result.execution_time:.2f}秒")
-    
+
     def _display_comparison_results(self, prediction_result: PredictionResult, comparison_result: ComparisonResult):
         """显示对比结果"""
         print("\n预测结果:")
         print("=" * 50)
-        
+
         # 预测号码
         predicted_numbers = prediction_result.predicted_numbers
         print(f"预测号码 ({len(predicted_numbers)}个):")
-        
+
         for i in range(0, len(predicted_numbers), 10):
             line_numbers = predicted_numbers[i:i+10]
             formatted_numbers = []
-            
+
             for num in line_numbers:
                 if num in comparison_result.hit_numbers:
                     formatted_numbers.append(f"\033[91m[{num:02d}]\033[0m")  # 红色标记
                 else:
                     formatted_numbers.append(f"{num:02d}")
-            
+
             print(" ".join(formatted_numbers))
-        
+
         print()
-        
+
         # 开奖号码
         actual_numbers = comparison_result.actual_numbers
         print(f"开奖号码 ({len(actual_numbers)}个):")
-        
+
         for i in range(0, len(actual_numbers), 10):
             line_numbers = actual_numbers[i:i+10]
             formatted_numbers = [f"\033[92m[{num:02d}]\033[0m" for num in line_numbers]  # 绿色
             print(" ".join(formatted_numbers))
-        
+
         print()
-        
+
         # 命中分析
         print("命中分析:")
         print("=" * 50)
@@ -6256,38 +6273,38 @@ class Happy8CLI:
         print(f"命中号码: {hit_numbers_str}")
         print(f"命中数量: {comparison_result.hit_count}/{len(predicted_numbers)}")
         print(f"命中率: {comparison_result.hit_rate:.2%}")
-        
+
         # 详细分析
         self._display_detailed_analysis(comparison_result)
-        
+
         print(f"\n预测完成! 用时: {prediction_result.execution_time:.2f}秒")
-    
+
     def _display_detailed_analysis(self, comparison_result: ComparisonResult):
         """显示详细分析"""
         hit_numbers = comparison_result.hit_numbers
         distribution = comparison_result.hit_distribution
-        
+
         print("\n详细分析:")
         print(f"- 小号命中: {distribution.get('small_numbers', 0)}个 (1-40号段)")
         print(f"- 大号命中: {distribution.get('big_numbers', 0)}个 (41-80号段)")
         print(f"- 奇数命中: {distribution.get('odd_numbers', 0)}个")
         print(f"- 偶数命中: {distribution.get('even_numbers', 0)}个")
-        
+
         # 区域分布
         zone_hits = [distribution.get(f'zone_{i}', 0) for i in range(1, 9)]
         print(f"- 各区域命中分布: {zone_hits}")
-    
+
     def _save_results(self, prediction_result: PredictionResult, comparison_result: ComparisonResult, output_path: str):
         """保存结果到文件"""
         results = {
             'prediction': asdict(prediction_result),
             'comparison': asdict(comparison_result)
         }
-        
+
         # 处理datetime对象
         results['prediction']['generation_time'] = results['prediction']['generation_time'].isoformat()
         results['comparison']['comparison_time'] = results['comparison']['comparison_time'].isoformat()
-        
+
         with open(output_path, 'w', encoding='utf-8') as f:
             json.dump(results, f, ensure_ascii=False, indent=2)
 
