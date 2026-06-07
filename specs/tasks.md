@@ -7,7 +7,7 @@
 - [x] 1. **项目架构初始化**
     - [x] 1.1. 创建项目目录结构
         - *Goal*: 建立前后端分离的项目骨架
-        - *Details*: 创建happy8-miniprogram目录，包含frontend/、backend/、database/、deployment/子目录
+        - *Details*: 采用根目录分层结构，包含frontend/、backend/、infra/database/、infra/deployment/等目录
         - *Requirements*: 架构设计要求
     - [x] 1.2. 配置开发环境
         - *Goal*: 搭建开发、测试、生产环境

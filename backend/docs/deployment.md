@@ -23,7 +23,7 @@
 
 ```bash
 # 1. 克隆项目
-cd /Users/linshibo/GithubProject/Happy8/happy8-miniprogram
+cd /Users/linshibo/GithubProject/Happy8
 
 # 2. 配置环境变量
 cp backend/.env.example backend/.env

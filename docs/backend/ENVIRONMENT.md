@@ -40,7 +40,7 @@
 ```bash
 # 克隆项目
 git clone <repository-url>
-cd happy8-miniprogram
+cd Happy8
 
 # 启动开发环境
 ./deployment/scripts/start-dev.sh
@@ -80,7 +80,7 @@ WECHAT_PAY_APIV3_KEY=your_apiv3_key
 ### 5. 开发工具配置
 
 #### VS Code
-- 使用提供的 `happy8-miniprogram.code-workspace` 工作区
+- 使用项目根目录 `Happy8` 作为工作区
 - 自动安装推荐的扩展
 - 配置了Python、TypeScript、Docker等开发环境
 

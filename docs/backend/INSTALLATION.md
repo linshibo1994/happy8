@@ -19,7 +19,7 @@
 ### 1. 克隆项目
 ```bash
 git clone <repository-url>
-cd happy8-miniprogram
+cd Happy8
 ```
 
 ### 2. 后端环境设置
@@ -90,11 +90,8 @@ cd frontend
 # 安装依赖
 npm install
 
-# 启动开发服务器（微信小程序）
-npm run dev:mp-weixin
-
-# 启动H5版本（用于调试）
-npm run dev:h5
+# 启动 Vite 前端工作台
+npm run dev
 ```
 
 ## Docker部署（推荐）
