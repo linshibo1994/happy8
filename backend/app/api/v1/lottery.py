@@ -17,6 +17,24 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/lottery", tags=["开奖"])
 
 
+def parse_zone_query(zones: Optional[str]) -> Optional[List[int]]:
+    """解析八区查询参数，支持逗号分隔格式。"""
+    if not zones:
+        return None
+    parsed = []
+    for item in zones.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        try:
+            zone = int(item)
+        except ValueError:
+            continue
+        if 1 <= zone <= 8 and zone not in parsed:
+            parsed.append(zone)
+    return parsed or None
+
+
 def serialize_lottery_result(result: Any) -> Dict[str, Any]:
     """将开奖结果序列化为可返回的字典（兼容ORM对象和字典）。"""
     if not result:
@@ -234,6 +252,11 @@ async def filter_sandbox_results(
     rules: Optional[List[str]] = Query(None),
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
+    periods: int = Query(100, ge=1, le=1000),
+    event_type: str = Query("consecutive", pattern="^(consecutive|gap|mixed|interval)$"),
+    level: int = Query(3, ge=2, le=4),
+    scope: str = Query("global", pattern="^(global|zone)$"),
+    zones: Optional[str] = Query(None),
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
     issue: Optional[str] = None,
@@ -249,6 +272,11 @@ async def filter_sandbox_results(
             start_date=start_date,
             end_date=end_date,
             issue=issue,
+            periods=periods,
+            event_type=event_type,
+            level=level,
+            scope=scope,
+            zones=parse_zone_query(zones),
         )
         return create_success_response(data=data, message="数据沙盘过滤成功")
     except Exception as exc:
@@ -262,6 +290,11 @@ async def filter_sandbox_results(
 @router.get("/sandbox/intervals")
 async def analyze_sandbox_intervals(
     rules: Optional[List[str]] = Query(None),
+    periods: int = Query(100, ge=1, le=1000),
+    event_type: str = Query("consecutive", pattern="^(consecutive|gap|mixed|interval)$"),
+    level: int = Query(3, ge=2, le=4),
+    scope: str = Query("global", pattern="^(global|zone)$"),
+    zones: Optional[str] = Query(None),
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
     issue: Optional[str] = None,
@@ -275,6 +308,11 @@ async def analyze_sandbox_intervals(
             start_date=start_date,
             end_date=end_date,
             issue=issue,
+            periods=periods,
+            event_type=event_type,
+            level=level,
+            scope=scope,
+            zones=parse_zone_query(zones),
         )
         return create_success_response(data=data, message="数据沙盘间隔分析成功")
     except Exception as exc:
@@ -289,6 +327,10 @@ async def analyze_sandbox_intervals(
 async def summarize_sandbox_patterns(
     rules: Optional[List[str]] = Query(None),
     periods: int = Query(100, ge=1, le=1000),
+    event_type: str = Query("consecutive", pattern="^(consecutive|gap|mixed|interval)$"),
+    level: int = Query(3, ge=2, le=4),
+    scope: str = Query("global", pattern="^(global|zone)$"),
+    zones: Optional[str] = Query(None),
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
     issue: Optional[str] = None,
@@ -303,6 +345,10 @@ async def summarize_sandbox_patterns(
             start_date=start_date,
             end_date=end_date,
             issue=issue,
+            event_type=event_type,
+            level=level,
+            scope=scope,
+            zones=parse_zone_query(zones),
         )
         return create_success_response(data=data, message="数据沙盘规律总结成功")
     except Exception as exc:

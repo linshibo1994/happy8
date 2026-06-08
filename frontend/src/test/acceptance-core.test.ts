@@ -10,6 +10,44 @@ import DataDashboardPage from '@/pages/DataDashboardPage.vue'
 import PredictionHistoryPage from '@/pages/PredictionHistoryPage.vue'
 import PredictionPage from '@/pages/PredictionPage.vue'
 
+vi.mock('@/api', () => ({
+  autoSyncLatestLottery: vi.fn().mockResolvedValue({
+    updated_count: 0,
+    latest_result: null,
+    synced_at: '2026-06-08T10:00:00+08:00',
+  }),
+  fetchLatestLotteryResults: vi.fn().mockResolvedValue({
+    results: [],
+    total: 0,
+  }),
+  fetchLotteryHistory: vi.fn().mockResolvedValue({
+    results: [],
+    total: 0,
+  }),
+  fetchSandboxAnalysis: vi.fn().mockResolvedValue({
+    window_size: 100,
+    actual_periods: 100,
+    total: 0,
+    events: [],
+    intervals: [],
+    summary: {
+      sample_periods: 100,
+      event_level: 3,
+      hit_periods: 0,
+      hit_rate: 0,
+      total_groups: 0,
+      avg_gap: null,
+      median_gap: null,
+      max_gap: null,
+      current_missing: null,
+      latest_issue: null,
+      top_zones: [],
+      baseline_delta: null,
+      updated_at: '2026-06-08T10:00:00+08:00',
+    },
+  }),
+}))
+
 const ChartPanelStub = defineComponent({
   name: 'ChartPanel',
   props: {
@@ -90,33 +128,27 @@ describe('前端重构核心验收路径', () => {
     expect(getButton(wrapper, '一键预测').attributes('disabled')).toBeUndefined()
   })
 
-  it('历史数据看板可加载并按期数、号码筛选', async () => {
-    vi.useFakeTimers()
-
+  it('数据沙盘可加载并按期数、口径筛选', async () => {
     const { wrapper } = await mountWithContext(DataDashboardPage, '/data', {
       ChartPanel: ChartPanelStub,
     })
-
-    expect(wrapper.text()).toContain('历史数据看板')
-    expect(wrapper.text()).toContain('正在读取历史开奖数据')
-
-    await vi.advanceTimersByTimeAsync(240)
     await flushDom()
 
+    expect(wrapper.text()).toContain('数据沙盘')
     expect(wrapper.text()).toContain('开奖期数')
-    expect(wrapper.text()).toContain('筛选窗口 100 期')
-    expect(wrapper.text()).toContain('号码热力图')
-    expect(wrapper.text()).toContain('历史开奖表')
+    expect(wrapper.text()).toContain('窗口 100 期')
+    expect(wrapper.text()).toContain('八区命中分布')
+    expect(wrapper.text()).toContain('规则命中')
 
     await getButton(wrapper, '30').trigger('click')
     await flushDom()
 
-    expect(wrapper.text()).toContain('筛选窗口 30 期')
+    expect(wrapper.text()).toContain('窗口 30 期')
 
-    await getButton(wrapper, '01').trigger('click')
+    await getButton(wrapper, '八区').trigger('click')
     await flushDom()
 
-    expect(wrapper.text()).toContain('已选号码：01')
+    expect(wrapper.text()).toContain('八区')
   })
 
   it('单算法预测入口能进入执行中并展示结果状态', async () => {

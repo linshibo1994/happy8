@@ -1,83 +1,86 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import type { EChartsOption } from 'echarts'
 import {
+  Activity,
   BarChart3,
   Database,
   Filter,
-  Gauge,
-  Grid2X2,
+  Globe2,
+  Layers3,
   RefreshCcw,
   RotateCcw,
-  Snowflake,
-  ThermometerSun,
+  Search,
+  Wifi,
 } from 'lucide-vue-next'
 
-import NumberBall from '@/components/balls/NumberBall.vue'
+import { autoSyncLatestLottery, fetchLotteryHistory, fetchSandboxAnalysis } from '@/api'
 import ChartPanel from '@/components/charts/ChartPanel.vue'
 import HistoryDrawTable from '@/components/data-table/HistoryDrawTable.vue'
-import NumberStatsTable from '@/components/data-table/NumberStatsTable.vue'
-import ReplayTable from '@/components/data-table/ReplayTable.vue'
-import { useAlgorithmStore } from '@/stores/algorithm'
-import { useLotteryStore } from '@/stores/lottery'
+import SandboxEventTable from '@/components/data-sandbox/SandboxEventTable.vue'
+import SandboxIntervalTable from '@/components/data-sandbox/SandboxIntervalTable.vue'
+import { mapLotteryResult, useLotteryStore } from '@/stores/lottery'
 import { useUiStore } from '@/stores/ui'
-import type { LotteryResult } from '@/types'
+import type {
+  LotteryResult,
+  LotteryResultPayload,
+  SandboxAnalysisResponse,
+  SandboxConsecutiveLevel,
+  SandboxEventMatch,
+  SandboxEventType,
+  SandboxIntervalRow,
+  SandboxScope,
+  SandboxSummary,
+  SandboxTableMode,
+} from '@/types'
 
-type PeriodOption = 30 | 50 | 100 | 200
 type Density = 'comfortable' | 'compact'
-type StatisticType = 'overview' | 'frequency' | 'missing' | 'structure'
-type TableMode = 'history' | 'numbers' | 'replay'
-type NumberLevel = 'hot' | 'cold' | 'normal'
+type PeriodOption = 30 | 50 | 100 | 200 | 500
 
-interface NumberStatsRow {
-  number: number
+interface SandboxFilters {
+  period: PeriodOption
+  issue: string
+  startDate: string
+  endDate: string
+  eventType: SandboxEventType
+  level: SandboxConsecutiveLevel
+  scope: SandboxScope
+  zones: number[]
+  page: number
+  pageSize: 20 | 50 | 100
+}
+
+interface EightZoneRow {
+  zone: number
+  label: string
   count: number
   rate: number
-  currentMissing: number
-  maxMissing: number
-  latestIssue: string
-  zone: string
-  level: NumberLevel
 }
 
-interface ReplayRow {
-  id: string
-  predictedAt: string
-  targetIssue: string
-  algorithmName: string
-  predictedNumbers: number[]
-  actualNumbers: number[]
-  hits: number[]
-  confidence: number
-  elapsedMs: number
-}
-
-const periodOptions: PeriodOption[] = [30, 50, 100, 200]
-const statisticTypes: Array<{ key: StatisticType; label: string }> = [
-  { key: 'overview', label: '总览' },
-  { key: 'frequency', label: '频率' },
-  { key: 'missing', label: '遗漏' },
-  { key: 'structure', label: '结构' },
+const periodOptions: PeriodOption[] = [30, 50, 100, 200, 500]
+const pageSizeOptions = [20, 50, 100] as const
+const eventTypes: Array<{ key: SandboxEventType; label: string }> = [
+  { key: 'consecutive', label: '连号' },
+  { key: 'gap', label: '隔号' },
+  { key: 'mixed', label: '连号隔号' },
+  { key: 'interval', label: '间隔' },
 ]
-const tableModes: Array<{ key: TableMode; label: string }> = [
-  { key: 'history', label: '历史开奖表' },
-  { key: 'numbers', label: '号码统计表' },
-  { key: 'replay', label: '复盘表' },
+const levels: Array<{ key: SandboxConsecutiveLevel; label: string }> = [
+  { key: 2, label: '两连' },
+  { key: 3, label: '三连' },
+  { key: 4, label: '四连' },
 ]
-const zoneLabels = ['1-20', '21-40', '41-60', '61-80'] as const
+const zoneOptions = Array.from({ length: 8 }, (_, index) => ({
+  key: index + 1,
+  label: `${index + 1}区`,
+  range: `${index * 10 + 1}-${index * 10 + 10}`,
+}))
 const allNumbers = Array.from({ length: 80 }, (_, index) => index + 1)
-const cinnabar = '#C9352B'
-const ink = '#171A1F'
-const bronze = '#B88A3B'
-const dataBlue = '#276EF1'
-const turquoise = '#2E8B6D'
-const riskOrange = '#D9822B'
 const lineColor = '#E3DDD2'
 
 const route = useRoute()
 const router = useRouter()
-const algorithmStore = useAlgorithmStore()
 const lotteryStore = useLotteryStore()
 const uiStore = useUiStore()
 
@@ -85,171 +88,78 @@ const latestDate = new Date(lotteryStore.latestResult.openedAt)
 const defaultStartDate = new Date(latestDate)
 defaultStartDate.setDate(latestDate.getDate() - 199)
 
-const dateStart = ref(queryString(route.query.start) ?? formatDateInput(defaultStartDate))
-const dateEnd = ref(queryString(route.query.end) ?? formatDateInput(latestDate))
-const selectedPeriod = ref<PeriodOption>(parsePeriod(queryString(route.query.period)))
-const selectedStatisticType = ref<StatisticType>(parseStatisticType(queryString(route.query.stat)))
-const selectedNumbers = ref<number[]>(parseNumberList(queryString(route.query.numbers)))
-const selectedAlgorithmNames = ref<string[]>(
-  parseAlgorithmList(
-    queryString(route.query.algos),
-    algorithmStore.enabledAlgorithms.map((algorithm) => algorithm.name),
-  ),
-)
+const filters = ref<SandboxFilters>({
+  period: parsePeriod(queryString(route.query.period)),
+  issue: queryString(route.query.issue) ?? '',
+  startDate: queryString(route.query.start) ?? formatDateInput(defaultStartDate),
+  endDate: queryString(route.query.end) ?? formatDateInput(latestDate),
+  eventType: parseEventType(queryString(route.query.event)),
+  level: parseLevel(queryString(route.query.level)),
+  scope: parseScope(queryString(route.query.scope)),
+  zones: parseZones(queryString(route.query.zones)),
+  page: parsePositiveInt(queryString(route.query.page), 1),
+  pageSize: parsePageSize(queryString(route.query.pageSize)),
+})
 const dashboardDensity = ref<Density>(parseDensity(queryString(route.query.density), uiStore.density))
-const activeTableMode = ref<TableMode>('history')
-const isLoading = ref(true)
+const activeTableMode = ref<SandboxTableMode>(parseTableMode(queryString(route.query.table)))
+const history = ref<LotteryResult[]>([])
+const historyTotal = ref(0)
+const remoteAnalysis = ref<SandboxAnalysisResponse | null>(null)
+const isLoading = ref(false)
+const isRefreshing = ref(false)
 const errorMessage = ref('')
-let loadingTimer: number | undefined
+const lastSyncedAt = ref(lotteryStore.lastUpdatedAt)
+const dataSource = ref<'接口' | '本地样例'>('本地样例')
+let sandboxRequestId = 0
 
-const enabledAlgorithms = computed(() => algorithmStore.enabledAlgorithms)
-const historySeries = computed(() => createHistorySeries(lotteryStore.latestResult, 240))
+const fallbackHistory = computed(() => createHistorySeries(lotteryStore.latestResult, Math.max(filters.value.period, 240)))
 
-const filteredHistory = computed(() => {
-  const start = new Date(`${dateStart.value}T00:00:00`)
-  const end = new Date(`${dateEnd.value}T23:59:59`)
+const filteredFallbackHistory = computed(() => {
+  const start = new Date(`${filters.value.startDate}T00:00:00`)
+  const end = new Date(`${filters.value.endDate}T23:59:59`)
+  const issueKeyword = filters.value.issue.trim()
 
-  return historySeries.value
+  return fallbackHistory.value
     .filter((draw) => {
       const openedAt = new Date(draw.openedAt)
       const inDateRange = openedAt >= start && openedAt <= end
-      const includesNumbers =
-        selectedNumbers.value.length === 0 ||
-        selectedNumbers.value.every((number) => draw.numbers.includes(number))
-
-      return inDateRange && includesNumbers
+      const matchIssue = !issueKeyword || draw.issue.includes(issueKeyword)
+      return inDateRange && matchIssue
     })
-    .slice(0, selectedPeriod.value)
+    .slice(0, filters.value.period)
 })
 
-const chronologicalHistory = computed(() => [...filteredHistory.value].reverse())
-
-const numberStats = computed<NumberStatsRow[]>(() => {
-  const rows = filteredHistory.value
-  const rawRows = allNumbers.map((number) => {
-    const includedRows = rows.filter((draw) => draw.numbers.includes(number))
-    return {
-      number,
-      count: includedRows.length,
-      rate: rows.length > 0 ? includedRows.length / rows.length : 0,
-      currentMissing: currentMissing(rows, number),
-      maxMissing: maxMissing(rows, number),
-      latestIssue: includedRows[0]?.issue ?? '',
-      zone: zoneOfNumber(number),
-      level: 'normal' as NumberLevel,
-    }
-  })
-
-  const hotNumbers = new Set(
-    [...rawRows]
-      .sort((left, right) => right.count - left.count || left.number - right.number)
-      .slice(0, 8)
-      .map((row) => row.number),
-  )
-  const coldNumbers = new Set(
-    [...rawRows]
-      .sort((left, right) => left.count - right.count || right.currentMissing - left.currentMissing)
-      .slice(0, 8)
-      .map((row) => row.number),
-  )
-
-  return rawRows.map((row) => ({
-    ...row,
-    level: hotNumbers.has(row.number) ? 'hot' : coldNumbers.has(row.number) ? 'cold' : 'normal',
-  }))
+const analysisSourceHistory = computed(() => {
+  const source = history.value.length > 0 ? history.value : filteredFallbackHistory.value
+  return source.slice(0, filters.value.period)
 })
 
-const hotTop = computed(() => topNumbers(numberStats.value, 'hot'))
-const coldTop = computed(() => topNumbers(numberStats.value, 'cold'))
-const maxMissingRow = computed(() => {
-  return [...numberStats.value].sort((left, right) => right.maxMissing - left.maxMissing || left.number - right.number)[0]
-})
+const localEvents = computed(() => buildEventMatches(analysisSourceHistory.value, filters.value))
+const localIntervals = computed(() => buildIntervals(localEvents.value, analysisSourceHistory.value))
+const localSummary = computed(() =>
+  buildSummary(analysisSourceHistory.value, localEvents.value, localIntervals.value, filters.value),
+)
 
-const averageSum = computed(() => {
-  if (filteredHistory.value.length === 0) {
-    return 0
+const sandboxEvents = computed(() => remoteAnalysis.value?.events ?? localEvents.value)
+const sandboxIntervals = computed(() => remoteAnalysis.value?.intervals ?? localIntervals.value)
+const sandboxSummary = computed(() => remoteAnalysis.value?.summary ?? localSummary.value)
+const actualPeriods = computed(() => remoteAnalysis.value?.actual_periods ?? analysisSourceHistory.value.length)
+const displayHistory = computed(() => (history.value.length > 0 ? history.value : paginate(filteredFallbackHistory.value, filters.value.page, filters.value.pageSize)))
+const eventRows = computed(() => paginate(sandboxEvents.value, filters.value.page, filters.value.pageSize))
+const intervalRows = computed(() => paginate(sandboxIntervals.value, filters.value.page, filters.value.pageSize))
+const totalRows = computed(() => {
+  if (activeTableMode.value === 'history') {
+    return historyTotal.value || analysisSourceHistory.value.length
   }
-
-  const total = filteredHistory.value.reduce((sum, draw) => sum + draw.sum, 0)
-  return Math.round(total / filteredHistory.value.length)
-})
-
-const zoneTotals = computed(() => {
-  return filteredHistory.value.reduce<Record<string, number>>(
-    (totals, draw) => {
-      zoneLabels.forEach((zone) => {
-        totals[zone] += draw.zoneDistribution[zone] ?? 0
-      })
-      return totals
-    },
-    { '1-20': 0, '21-40': 0, '41-60': 0, '61-80': 0 },
-  )
-})
-
-const zoneBiasText = computed(() => {
-  if (filteredHistory.value.length === 0) {
-    return '无数据'
+  if (activeTableMode.value === 'intervals') {
+    return sandboxIntervals.value.length
   }
-
-  const expected = filteredHistory.value.length * 5
-  const [zone, count] = Object.entries(zoneTotals.value).sort(
-    (left, right) => Math.abs(right[1] - expected) - Math.abs(left[1] - expected),
-  )[0]
-  const deviation = expected === 0 ? 0 : ((count - expected) / expected) * 100
-
-  return `${zone} ${deviation >= 0 ? '+' : ''}${deviation.toFixed(1)}%`
+  return sandboxEvents.value.length
 })
-
-const dashboardMetrics = computed(() => [
-  {
-    key: 'issues',
-    label: '开奖期数',
-    value: `${filteredHistory.value.length}`,
-    detail: `筛选窗口 ${selectedPeriod.value} 期`,
-    icon: Database,
-  },
-  {
-    key: 'sum',
-    label: '平均和值',
-    value: `${averageSum.value}`,
-    detail: '按当前筛选范围计算',
-    icon: Gauge,
-  },
-  {
-    key: 'hot',
-    label: '热号Top',
-    value: hotTop.value.slice(0, 3).map((row) => padNumber(row.number)).join(' '),
-    detail: hotTop.value.slice(0, 3).map((row) => `${row.count}次`).join(' / ') || '无数据',
-    icon: ThermometerSun,
-    rows: hotTop.value.slice(0, 3),
-  },
-  {
-    key: 'cold',
-    label: '冷号Top',
-    value: coldTop.value.slice(0, 3).map((row) => padNumber(row.number)).join(' '),
-    detail: coldTop.value.slice(0, 3).map((row) => `漏${row.currentMissing}`).join(' / ') || '无数据',
-    icon: Snowflake,
-    rows: coldTop.value.slice(0, 3),
-  },
-  {
-    key: 'missing',
-    label: '最大遗漏',
-    value: maxMissingRow.value ? `${padNumber(maxMissingRow.value.number)}` : '无',
-    detail: maxMissingRow.value ? `${maxMissingRow.value.maxMissing} 期` : '无数据',
-    icon: BarChart3,
-    rows: maxMissingRow.value ? [maxMissingRow.value] : [],
-  },
-  {
-    key: 'zone',
-    label: '区间偏态',
-    value: zoneBiasText.value,
-    detail: '相对理论均值偏离',
-    icon: Grid2X2,
-  },
-])
+const totalPages = computed(() => Math.max(1, Math.ceil(totalRows.value / filters.value.pageSize)))
 
 const historyRows = computed(() =>
-  filteredHistory.value.map((draw) => ({
+  displayHistory.value.map((draw) => ({
     issue: draw.issue,
     openedAt: draw.openedAt,
     numbers: draw.numbers,
@@ -260,220 +170,159 @@ const historyRows = computed(() =>
   })),
 )
 
-const replayRows = computed<ReplayRow[]>(() => {
-  const algorithmMap = new Map(enabledAlgorithms.value.map((algorithm) => [algorithm.name, algorithm.displayName]))
-  const activeAlgorithms =
-    selectedAlgorithmNames.value.length > 0
-      ? selectedAlgorithmNames.value
-      : enabledAlgorithms.value.map((item) => item.name)
+const metricItems = computed(() => [
+  {
+    key: 'sample',
+    label: '开奖期数',
+    value: String(sandboxSummary.value.sample_periods),
+    detail: `窗口 ${filters.value.period} 期，实际统计 ${actualPeriods.value} 期`,
+    icon: Database,
+  },
+  {
+    key: 'hits',
+    label: '命中期数',
+    value: String(sandboxSummary.value.hit_periods),
+    detail: `命中率 ${formatPercent(sandboxSummary.value.hit_rate)}`,
+    icon: Activity,
+  },
+  {
+    key: 'groups',
+    label: '总组数',
+    value: String(sandboxSummary.value.total_groups),
+    detail: currentRuleLabel.value,
+    icon: Layers3,
+  },
+  {
+    key: 'gap',
+    label: '平均空窗',
+    value: formatNumberOrText(sandboxSummary.value.avg_gap, '样本不足'),
+    detail: `最长空窗 ${formatNumberOrText(sandboxSummary.value.max_gap, '样本不足')}`,
+    icon: BarChart3,
+  },
+  {
+    key: 'missing',
+    label: '当前遗漏',
+    value: formatNumberOrText(sandboxSummary.value.current_missing, '样本不足'),
+    detail: `最近命中 ${sandboxSummary.value.latest_issue ?? '暂无'}`,
+    icon: Search,
+  },
+  {
+    key: 'sync',
+    label: '联网状态',
+    value: dataSource.value,
+    detail: `更新 ${formatDateTime(lastSyncedAt.value)}`,
+    icon: Wifi,
+  },
+])
 
-  return filteredHistory.value.slice(0, 16).map((draw, index) => {
-    const algorithmName = activeAlgorithms[index % activeAlgorithms.length] ?? 'frequency'
-    const predictedNumbers = buildPredictedNumbers(draw, index)
-    const hits = predictedNumbers.filter((number) => draw.numbers.includes(number))
-    const predictedAt = new Date(draw.openedAt)
-    predictedAt.setHours(predictedAt.getHours() - 3 - index)
+const currentRuleLabel = computed(() => {
+  const event = eventTypes.find((item) => item.key === filters.value.eventType)?.label ?? '连号'
+  const level = filters.value.eventType === 'gap' ? '' : levels.find((item) => item.key === filters.value.level)?.label
+  const scope = filters.value.scope === 'global' ? '全局' : `八区 ${filters.value.zones.join('、') || '全部'}`
+  return [scope, level, event].filter(Boolean).join(' ')
+})
 
-    return {
-      id: `${draw.issue}-${algorithmName}`,
-      predictedAt: predictedAt.toISOString(),
-      targetIssue: draw.issue,
-      algorithmName: algorithmMap.get(algorithmName) ?? algorithmName,
-      predictedNumbers,
-      actualNumbers: draw.numbers,
-      hits,
-      confidence: 0.52 + ((index % 8) * 0.03),
-      elapsedMs: 820 + ((index * 173) % 2400),
-    }
+const summaryText = computed(() => {
+  const topZones = sandboxSummary.value.top_zones?.slice(0, 3).map((item) => `${item.zone}区 ${item.count}次`).join('、')
+  const baseline = typeof sandboxSummary.value.baseline_delta === 'number'
+    ? `相对基线 ${sandboxSummary.value.baseline_delta >= 0 ? '+' : ''}${formatPercent(sandboxSummary.value.baseline_delta)}。`
+    : '当前未接入长期基线。'
+
+  return [
+    `${currentRuleLabel.value} 在当前窗口命中 ${sandboxSummary.value.hit_periods} 期，出现率 ${formatPercent(sandboxSummary.value.hit_rate)}。`,
+    `平均空窗 ${formatNumberOrText(sandboxSummary.value.avg_gap, '样本不足')}，当前遗漏 ${formatNumberOrText(sandboxSummary.value.current_missing, '样本不足')}。`,
+    topZones ? `八区偏态集中在 ${topZones}。` : '当前口径暂无明显八区集中信息。',
+    baseline,
+    '历史统计只描述样本结构，不代表未来确定结果。',
+  ].join('')
+})
+
+const eightZoneRows = computed<EightZoneRow[]>(() => {
+  const totals = Array.from({ length: 8 }, (_, index) => ({
+    zone: index + 1,
+    label: `${index + 1}区`,
+    count: 0,
+    rate: 0,
+  }))
+
+  sandboxEvents.value.forEach((event) => {
+    const zones = event.zones?.length ? event.zones : event.groups.flatMap((group) => group.map(zoneOfNumber))
+    Array.from(new Set(zones)).forEach((zone) => {
+      totals[zone - 1].count += 1
+    })
   })
+
+  const max = Math.max(1, ...totals.map((row) => row.count))
+  return totals.map((row) => ({ ...row, rate: row.count / max }))
 })
 
-const selectedNumbersLabel = computed(() => {
-  if (selectedNumbers.value.length === 0) {
-    return '未限定号码'
-  }
-
-  return selectedNumbers.value.map(padNumber).join('、')
-})
-
-const analysisHint = computed(() => {
-  const hintMap: Record<StatisticType, string> = {
-    overview: '当前总览同步展示频率、和值、结构和遗漏摘要。',
-    frequency: '频率视角重点观察热号、冷号和出现率变化。',
-    missing: '遗漏视角优先比较当前遗漏与历史最大遗漏。',
-    structure: '结构视角关注奇偶、大小和四区间偏态。',
-  }
-
-  return hintMap[selectedStatisticType.value]
-})
-
-const heatmapSummary = computed(() => {
-  const top = hotTop.value[0]
-  if (!top) {
-    return '暂无热力数据。'
-  }
-
-  return `${padNumber(top.number)} 出现 ${top.count} 次，为当前筛选范围最高频号码；已选号码：${selectedNumbersLabel.value}。`
-})
-
-const sumTrendSummary = computed(() => {
-  const latest = filteredHistory.value[0]
-  if (!latest) {
-    return '暂无和值走势数据。'
-  }
-
-  return `最新一期和值 ${latest.sum}，筛选窗口平均和值 ${averageSum.value}。`
-})
-
-const structureTrendSummary = computed(() => {
-  const latest = filteredHistory.value[0]
-  if (!latest) {
-    return '暂无奇偶大小走势数据。'
-  }
-
-  return `最新一期奇偶 ${latest.oddCount}:${latest.evenCount}，大小 ${latest.bigCount}:${latest.smallCount}。`
-})
-
-const zoneSummary = computed(() => {
-  return `四区间累计分布：${zoneLabels.map((zone) => `${zone} ${zoneTotals.value[zone]}`).join('，')}。`
-})
-
-const missingSummary = computed(() => {
-  const targetRows = missingChartRows.value.slice(0, 3)
-  if (targetRows.length === 0) {
-    return '暂无遗漏摘要数据。'
-  }
-
-  return `遗漏靠前号码：${targetRows.map((row) => `${padNumber(row.number)} 当前漏${row.currentMissing}`).join('，')}。`
-})
-
-const heatmapOption = computed<EChartsOption>(() => ({
-  tooltip: {
-    trigger: 'item',
-    formatter: (params: unknown) => {
-      const data = (params as { data?: [number, number, number, number] }).data
-      if (!data) {
-        return ''
-      }
-      return `号码 ${padNumber(data[3])}<br/>出现 ${data[2]} 次`
-    },
-  },
-  grid: { top: 20, right: 18, bottom: 34, left: 52 },
-  xAxis: {
-    type: 'category',
-    data: Array.from({ length: 20 }, (_, index) => String(index + 1)),
-    axisLine: { lineStyle: { color: lineColor } },
-    axisLabel: { color: '#6B7280' },
-  },
-  yAxis: {
-    type: 'category',
-    data: zoneLabels,
-    axisLine: { lineStyle: { color: lineColor } },
-    axisLabel: { color: '#6B7280' },
-  },
-  visualMap: {
-    min: 0,
-    max: Math.max(1, ...numberStats.value.map((row) => row.count)),
-    orient: 'horizontal',
-    left: 'center',
-    bottom: 0,
-    itemWidth: 12,
-    itemHeight: 90,
-    calculable: false,
-    inRange: {
-      color: ['#F7F3EA', '#E9B7A9', cinnabar],
-    },
-  },
-  series: [
-    {
-      type: 'heatmap',
-      data: numberStats.value.map((row) => [
-        (row.number - 1) % 20,
-        Math.floor((row.number - 1) / 20),
-        row.count,
-        row.number,
-      ]),
-      itemStyle: {
-        borderColor: '#fff',
-        borderWidth: 2,
-        borderRadius: 3,
-      },
-      emphasis: {
-        itemStyle: {
-          borderColor: ink,
-          borderWidth: 1,
-        },
-      },
-    },
-  ],
-}))
-
-const sumTrendOption = computed<EChartsOption>(() => ({
+const zoneHeatmapOption = computed<EChartsOption>(() => ({
   tooltip: { trigger: 'axis' },
-  grid: { top: 24, right: 18, bottom: 34, left: 46 },
+  grid: { top: 24, right: 18, bottom: 34, left: 42 },
   xAxis: {
     type: 'category',
-    data: chronologicalHistory.value.map((draw) => draw.issue.slice(-3)),
+    data: eightZoneRows.value.map((row) => row.label),
     axisLine: { lineStyle: { color: lineColor } },
     axisLabel: { color: '#6B7280' },
   },
   yAxis: {
     type: 'value',
-    min: 650,
-    max: 950,
     splitLine: { lineStyle: { color: lineColor, type: 'dashed' } },
     axisLabel: { color: '#6B7280' },
   },
   series: [
     {
-      name: '和值',
+      name: '命中期数',
+      type: 'bar',
+      barWidth: 24,
+      itemStyle: {
+        color: '#276EF1',
+        borderRadius: [5, 5, 0, 0],
+      },
+      data: eightZoneRows.value.map((row) => row.count),
+    },
+  ],
+}))
+
+const eventTimelineOption = computed<EChartsOption>(() => ({
+  tooltip: { trigger: 'axis' },
+  grid: { top: 24, right: 18, bottom: 34, left: 34 },
+  xAxis: {
+    type: 'category',
+    data: [...analysisSourceHistory.value].reverse().map((draw) => draw.issue.slice(-4)),
+    axisLine: { lineStyle: { color: lineColor } },
+    axisLabel: { color: '#6B7280' },
+  },
+  yAxis: {
+    type: 'value',
+    min: 0,
+    max: Math.max(1, ...sandboxEvents.value.map((event) => event.group_count ?? event.groups.length)),
+    splitLine: { lineStyle: { color: lineColor, type: 'dashed' } },
+    axisLabel: { color: '#6B7280' },
+  },
+  series: [
+    {
+      name: '事件组数',
       type: 'line',
       smooth: true,
       symbolSize: 5,
-      lineStyle: { color: dataBlue, width: 2 },
-      itemStyle: { color: dataBlue },
-      areaStyle: { color: 'rgba(39, 110, 241, 0.1)' },
-      data: chronologicalHistory.value.map((draw) => draw.sum),
-      markLine: {
-        symbol: 'none',
-        lineStyle: { color: bronze, type: 'dashed' },
-        data: [{ yAxis: averageSum.value, name: '平均和值' }],
-      },
+      lineStyle: { color: '#C9352B', width: 2 },
+      itemStyle: { color: '#C9352B' },
+      areaStyle: { color: 'rgba(201, 53, 43, 0.1)' },
+      data: [...analysisSourceHistory.value].reverse().map((draw) => {
+        const event = sandboxEvents.value.find((item) => item.issue === draw.issue)
+        return event?.group_count ?? event?.groups.length ?? 0
+      }),
     },
   ],
 }))
 
-const structureTrendOption = computed<EChartsOption>(() => ({
+const intervalOption = computed<EChartsOption>(() => ({
   tooltip: { trigger: 'axis' },
-  legend: { top: 0, textStyle: { color: '#6B7280' } },
-  grid: { top: 38, right: 18, bottom: 34, left: 34 },
+  grid: { top: 24, right: 18, bottom: 34, left: 42 },
   xAxis: {
     type: 'category',
-    data: chronologicalHistory.value.map((draw) => draw.issue.slice(-3)),
-    axisLine: { lineStyle: { color: lineColor } },
-    axisLabel: { color: '#6B7280' },
-  },
-  yAxis: {
-    type: 'value',
-    min: 0,
-    max: 20,
-    splitLine: { lineStyle: { color: lineColor, type: 'dashed' } },
-    axisLabel: { color: '#6B7280' },
-  },
-  series: [
-    buildLineSeries('奇数', chronologicalHistory.value.map((draw) => draw.oddCount), cinnabar),
-    buildLineSeries('偶数', chronologicalHistory.value.map((draw) => draw.evenCount), dataBlue),
-    buildLineSeries('大号', chronologicalHistory.value.map((draw) => draw.bigCount), bronze),
-    buildLineSeries('小号', chronologicalHistory.value.map((draw) => draw.smallCount), turquoise),
-  ],
-}))
-
-const zoneDistributionOption = computed<EChartsOption>(() => ({
-  tooltip: { trigger: 'axis' },
-  grid: { top: 26, right: 18, bottom: 34, left: 44 },
-  xAxis: {
-    type: 'category',
-    data: [...zoneLabels],
+    data: sandboxIntervals.value.map((row) => row.issue.slice(-4)),
     axisLine: { lineStyle: { color: lineColor } },
     axisLabel: { color: '#6B7280' },
   },
@@ -484,106 +333,172 @@ const zoneDistributionOption = computed<EChartsOption>(() => ({
   },
   series: [
     {
-      name: '累计出现',
-      type: 'bar',
-      barWidth: 34,
-      itemStyle: {
-        color: (params: { dataIndex: number }) => [cinnabar, dataBlue, turquoise, bronze][params.dataIndex],
-        borderRadius: [5, 5, 0, 0],
-      },
-      data: zoneLabels.map((zone) => zoneTotals.value[zone]),
-    },
-  ],
-}))
-
-const missingChartRows = computed(() => {
-  const selectedSet = new Set(selectedNumbers.value)
-  const sourceRows =
-    selectedNumbers.value.length > 0
-      ? numberStats.value.filter((row) => selectedSet.has(row.number)).slice(0, 5)
-      : [...numberStats.value].sort((left, right) => right.currentMissing - left.currentMissing).slice(0, 10)
-
-  return sourceRows
-})
-
-const missingOption = computed<EChartsOption>(() => ({
-  tooltip: { trigger: 'axis' },
-  legend: { top: 0, textStyle: { color: '#6B7280' } },
-  grid: { top: 38, right: 18, bottom: 34, left: 42 },
-  xAxis: {
-    type: 'category',
-    data: missingChartRows.value.map((row) => padNumber(row.number)),
-    axisLine: { lineStyle: { color: lineColor } },
-    axisLabel: { color: '#6B7280' },
-  },
-  yAxis: {
-    type: 'value',
-    splitLine: { lineStyle: { color: lineColor, type: 'dashed' } },
-    axisLabel: { color: '#6B7280' },
-  },
-  series: [
-    {
-      name: '当前遗漏',
+      name: '空窗期数',
       type: 'bar',
       barWidth: 18,
-      itemStyle: { color: riskOrange, borderRadius: [4, 4, 0, 0] },
-      data: missingChartRows.value.map((row) => row.currentMissing),
-    },
-    {
-      name: '最大遗漏',
-      type: 'line',
-      symbolSize: 6,
-      lineStyle: { color: dataBlue, width: 2 },
-      itemStyle: { color: dataBlue },
-      data: missingChartRows.value.map((row) => row.maxMissing),
+      itemStyle: { color: '#D9822B', borderRadius: [4, 4, 0, 0] },
+      data: sandboxIntervals.value.map((row) => row.gap ?? 0),
     },
   ],
 }))
 
 watch(
   () => [
-    dateStart.value,
-    dateEnd.value,
-    selectedPeriod.value,
-    selectedStatisticType.value,
-    selectedNumbers.value.join(','),
-    selectedAlgorithmNames.value.join(','),
-    dashboardDensity.value,
+    filters.value.period,
+    filters.value.issue,
+    filters.value.startDate,
+    filters.value.endDate,
+    filters.value.eventType,
+    filters.value.level,
+    filters.value.scope,
+    filters.value.zones.join(','),
+    filters.value.pageSize,
   ],
   () => {
-    uiStore.setDensity(dashboardDensity.value)
-    void router.replace({
-      query: {
-        ...route.query,
-        start: dateStart.value,
-        end: dateEnd.value,
-        period: String(selectedPeriod.value),
-        stat: selectedStatisticType.value,
-        numbers: selectedNumbers.value.join(',') || undefined,
-        algos: selectedAlgorithmNames.value.join(',') || undefined,
-        density: dashboardDensity.value,
-      },
-    })
+    filters.value.page = 1
+    syncQuery()
+    void loadSandboxData()
+  },
+)
+
+watch(
+  () => filters.value.page,
+  () => {
+    syncQuery()
+    void loadSandboxData()
   },
 )
 
 onMounted(() => {
-  loadingTimer = window.setTimeout(() => {
-    isLoading.value = false
-  }, 220)
+  void loadSandboxData()
 })
 
-onBeforeUnmount(() => {
-  if (loadingTimer) {
-    window.clearTimeout(loadingTimer)
+async function loadSandboxData() {
+  const requestId = ++sandboxRequestId
+  isLoading.value = true
+  errorMessage.value = ''
+
+  try {
+    const [historyPayload, analysisPayload] = await Promise.all([
+      fetchLotteryHistory({
+        page: filters.value.page,
+        page_size: filters.value.pageSize,
+        issue: filters.value.issue || undefined,
+        start_date: filters.value.startDate || undefined,
+        end_date: filters.value.endDate || undefined,
+      }),
+      fetchSandboxAnalysis({
+        recent_periods: filters.value.period,
+        issue: filters.value.issue || undefined,
+        start_date: filters.value.startDate || undefined,
+        end_date: filters.value.endDate || undefined,
+        event_type: filters.value.eventType,
+        level: filters.value.level,
+        scope: filters.value.scope,
+        zones: filters.value.scope === 'zone' ? filters.value.zones : undefined,
+        page: filters.value.page,
+        page_size: filters.value.pageSize,
+      }),
+    ])
+
+    if (requestId !== sandboxRequestId) {
+      return
+    }
+    history.value = historyPayload.results.map((item) => mapLotteryResult(item as LotteryResultPayload))
+    historyTotal.value = historyPayload.total
+    remoteAnalysis.value = analysisPayload
+    dataSource.value = '接口'
+  } catch (error) {
+    if (requestId !== sandboxRequestId) {
+      return
+    }
+    remoteAnalysis.value = null
+    history.value = []
+    historyTotal.value = 0
+    dataSource.value = '本地样例'
+    errorMessage.value = error instanceof Error ? error.message : '数据沙盘接口暂不可用，已使用本地样例计算'
+  } finally {
+    if (requestId === sandboxRequestId) {
+      isLoading.value = false
+    }
   }
-})
+}
+
+async function refreshData() {
+  isRefreshing.value = true
+  try {
+    const summary = await autoSyncLatestLottery()
+    lastSyncedAt.value = summary.synced_at ?? new Date().toISOString()
+    await lotteryStore.refreshLatestResults({ autoSync: false })
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : '最新开奖同步失败，已保留最近成功数据'
+  } finally {
+    isRefreshing.value = false
+    await loadSandboxData()
+  }
+}
+
+function resetFilters() {
+  filters.value = {
+    period: 100,
+    issue: '',
+    startDate: formatDateInput(defaultStartDate),
+    endDate: formatDateInput(latestDate),
+    eventType: 'consecutive',
+    level: 3,
+    scope: 'global',
+    zones: [],
+    page: 1,
+    pageSize: 20,
+  }
+  activeTableMode.value = 'events'
+  dashboardDensity.value = 'comfortable'
+  syncQuery()
+}
+
+function toggleZone(zone: number) {
+  if (filters.value.zones.includes(zone)) {
+    filters.value.zones = filters.value.zones.filter((item) => item !== zone)
+    return
+  }
+  filters.value.zones = [...filters.value.zones, zone].sort((left, right) => left - right)
+}
+
+function gotoPage(nextPage: number) {
+  filters.value.page = Math.min(Math.max(1, nextPage), totalPages.value)
+}
+
+function setTableMode(mode: SandboxTableMode) {
+  activeTableMode.value = mode
+}
+
+function setDashboardDensity(density: Density) {
+  dashboardDensity.value = density
+  uiStore.setDensity(density)
+}
+
+function syncQuery() {
+  uiStore.setDensity(dashboardDensity.value)
+  void router.replace({
+    query: {
+      period: String(filters.value.period),
+      issue: filters.value.issue || undefined,
+      start: filters.value.startDate,
+      end: filters.value.endDate,
+      event: filters.value.eventType,
+      level: String(filters.value.level),
+      scope: filters.value.scope,
+      zones: filters.value.zones.join(',') || undefined,
+      page: String(filters.value.page),
+      pageSize: String(filters.value.pageSize),
+    },
+  })
+}
 
 function queryString(value: unknown) {
   if (Array.isArray(value)) {
     return value[0]?.toString()
   }
-
   return typeof value === 'string' ? value : undefined
 }
 
@@ -592,38 +507,45 @@ function parsePeriod(value: string | undefined): PeriodOption {
   return periodOptions.includes(parsed as PeriodOption) ? (parsed as PeriodOption) : 100
 }
 
-function parseStatisticType(value: string | undefined): StatisticType {
-  return statisticTypes.some((item) => item.key === value) ? (value as StatisticType) : 'overview'
+function parseLevel(value: string | undefined): SandboxConsecutiveLevel {
+  const parsed = Number(value)
+  return parsed === 2 || parsed === 3 || parsed === 4 ? parsed : 3
+}
+
+function parseEventType(value: string | undefined): SandboxEventType {
+  return eventTypes.some((item) => item.key === value) ? (value as SandboxEventType) : 'consecutive'
+}
+
+function parseScope(value: string | undefined): SandboxScope {
+  return value === 'zone' ? 'zone' : 'global'
+}
+
+function parseZones(value: string | undefined) {
+  if (!value) {
+    return []
+  }
+  return value
+    .split(',')
+    .map((item) => Number(item))
+    .filter((zone) => Number.isInteger(zone) && zone >= 1 && zone <= 8)
+}
+
+function parsePageSize(value: string | undefined): 20 | 50 | 100 {
+  const parsed = Number(value)
+  return pageSizeOptions.includes(parsed as 20 | 50 | 100) ? (parsed as 20 | 50 | 100) : 20
+}
+
+function parsePositiveInt(value: string | undefined, fallback: number) {
+  const parsed = Number(value)
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback
 }
 
 function parseDensity(value: string | undefined, fallback: Density): Density {
   return value === 'compact' || value === 'comfortable' ? value : fallback
 }
 
-function parseNumberList(value: string | undefined) {
-  if (!value) {
-    return []
-  }
-
-  return Array.from(
-    new Set(
-      value
-        .split(',')
-        .map((item) => Number(item))
-        .filter((number) => Number.isInteger(number) && number >= 1 && number <= 80),
-    ),
-  ).sort((left, right) => left - right)
-}
-
-function parseAlgorithmList(value: string | undefined, fallbackNames: string[]) {
-  const fallback = fallbackNames.slice(0, 3)
-  if (!value) {
-    return fallback
-  }
-
-  const validNames = new Set(fallbackNames)
-  const parsed = value.split(',').filter((name) => validNames.has(name))
-  return parsed.length > 0 ? parsed : fallback
+function parseTableMode(value: string | undefined): SandboxTableMode {
+  return value === 'history' || value === 'intervals' || value === 'events' ? value : 'events'
 }
 
 function formatDateInput(date: Date) {
@@ -633,27 +555,46 @@ function formatDateInput(date: Date) {
   return `${year}-${month}-${day}`
 }
 
-function padNumber(number: number) {
-  return String(number).padStart(2, '0')
+function formatDateTime(value?: string) {
+  if (!value) {
+    return '-'
+  }
+  return new Intl.DateTimeFormat('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(value))
+}
+
+function formatPercent(value: number) {
+  return `${(value * 100).toFixed(1)}%`
+}
+
+function formatNumberOrText(value: number | null | undefined, fallback: string) {
+  return typeof value === 'number' && Number.isFinite(value) ? value.toFixed(value % 1 === 0 ? 0 : 1) : fallback
+}
+
+function paginate<T>(rows: T[], page: number, pageSize: number) {
+  const start = (page - 1) * pageSize
+  return rows.slice(start, start + pageSize)
 }
 
 function zoneOfNumber(number: number) {
-  if (number <= 20) {
-    return '1-20'
-  }
-  if (number <= 40) {
-    return '21-40'
-  }
-  if (number <= 60) {
-    return '41-60'
-  }
+  return Math.ceil(number / 10)
+}
+
+function fourZoneOfNumber(number: number) {
+  if (number <= 20) return '1-20'
+  if (number <= 40) return '21-40'
+  if (number <= 60) return '41-60'
   return '61-80'
 }
 
 function buildZoneDistribution(numbers: number[]) {
   return numbers.reduce<Record<string, number>>(
     (distribution, number) => {
-      distribution[zoneOfNumber(number)] += 1
+      distribution[fourZoneOfNumber(number)] += 1
       return distribution
     },
     { '1-20': 0, '21-40': 0, '41-60': 0, '61-80': 0 },
@@ -687,10 +628,7 @@ function createHistorySeries(latestResult: LotteryResult, count: number): Lotter
 
 function buildSeededNumbers(seed: number) {
   return allNumbers
-    .map((number) => ({
-      number,
-      score: pseudoRandomScore(number, seed),
-    }))
+    .map((number) => ({ number, score: pseudoRandomScore(number, seed) }))
     .sort((left, right) => left.score - right.score)
     .slice(0, 20)
     .map((item) => item.number)
@@ -702,216 +640,306 @@ function pseudoRandomScore(number: number, seed: number) {
   return raw - Math.floor(raw)
 }
 
-function currentMissing(rows: LotteryResult[], number: number) {
-  const index = rows.findIndex((draw) => draw.numbers.includes(number))
-  return index >= 0 ? index : rows.length
+function buildEventMatches(rows: LotteryResult[], currentFilters: SandboxFilters): SandboxEventMatch[] {
+  return rows
+    .map((draw) => {
+      const groups = matchGroups(draw.numbers, currentFilters)
+      if (groups.length === 0) {
+        return null
+      }
+
+      return {
+        issue: draw.issue,
+        openedAt: draw.openedAt,
+        numbers: draw.numbers,
+        event_type: currentFilters.eventType,
+        scope: currentFilters.scope,
+        zones: currentFilters.scope === 'zone'
+          ? currentFilters.zones.length > 0
+            ? currentFilters.zones
+            : Array.from(new Set(groups.flat().map(zoneOfNumber)))
+          : Array.from(new Set(groups.flat().map(zoneOfNumber))),
+        groups,
+        longest_length: Math.max(...groups.map((group) => group.length)),
+        group_count: groups.length,
+        label: eventLabel(currentFilters.eventType, currentFilters.level),
+      }
+    })
+    .filter((row): row is SandboxEventMatch => Boolean(row))
 }
 
-function maxMissing(rows: LotteryResult[], number: number) {
-  let current = 0
-  let max = 0
-
-  rows.forEach((draw) => {
-    if (draw.numbers.includes(number)) {
-      max = Math.max(max, current)
-      current = 0
-      return
+function matchGroups(numbers: number[], currentFilters: SandboxFilters) {
+  const scopedSets = buildScopedNumberSets(numbers, currentFilters)
+  const groups = scopedSets.flatMap((set) => {
+    if (currentFilters.eventType === 'gap') {
+      return findGapGroups(set)
     }
-
-    current += 1
+    if (currentFilters.eventType === 'mixed' || currentFilters.eventType === 'interval') {
+      return findMixedGroups(set)
+    }
+    return findConsecutiveGroups(set, currentFilters.level)
   })
 
-  return Math.max(max, current)
+  return uniqueGroups(groups)
 }
 
-function topNumbers(rows: NumberStatsRow[], type: 'hot' | 'cold') {
-  const sorted = [...rows].sort((left, right) => {
-    if (type === 'hot') {
-      return right.count - left.count || left.number - right.number
-    }
+function buildScopedNumberSets(numbers: number[], currentFilters: SandboxFilters) {
+  const sorted = [...new Set(numbers)].sort((left, right) => left - right)
+  if (currentFilters.scope === 'global') {
+    return [sorted]
+  }
 
-    return left.count - right.count || right.currentMissing - left.currentMissing || left.number - right.number
+  const zones = currentFilters.zones.length > 0 ? currentFilters.zones : zoneOptions.map((zone) => zone.key)
+  return zones.map((zone) => sorted.filter((number) => zoneOfNumber(number) === zone))
+}
+
+function findConsecutiveGroups(numbers: number[], level: SandboxConsecutiveLevel) {
+  const groups: number[][] = []
+  let current: number[] = []
+
+  numbers.forEach((number, index) => {
+    if (index === 0 || number === numbers[index - 1] + 1) {
+      current.push(number)
+    } else {
+      if (current.length >= level) {
+        groups.push([...current])
+      }
+      current = [number]
+    }
   })
 
-  return sorted.slice(0, 5)
+  if (current.length >= level) {
+    groups.push(current)
+  }
+
+  return groups
 }
 
-function buildPredictedNumbers(draw: LotteryResult, index: number) {
-  const hitCount = 3 + (index % 5)
-  const hits = draw.numbers.slice(index % 6, (index % 6) + hitCount)
-  const candidates = buildSeededNumbers(index + 311).filter((number) => !hits.includes(number))
-
-  return [...new Set([...hits, ...candidates])].slice(0, 10).sort((left, right) => left - right)
+function findGapGroups(numbers: number[]) {
+  const set = new Set(numbers)
+  return numbers.flatMap((number) => (set.has(number + 2) ? [[number, number + 2]] : []))
 }
 
-function buildLineSeries(name: string, data: number[], color: string) {
+function findMixedGroups(numbers: number[]) {
+  const groups: number[][] = []
+  for (let index = 0; index < numbers.length; index += 1) {
+    const group3 = numbers.slice(index, index + 3)
+    const group4 = numbers.slice(index, index + 4)
+    if (isMixedGroup(group3)) groups.push(group3)
+    if (isMixedGroup(group4)) groups.push(group4)
+  }
+  return groups
+}
+
+function isMixedGroup(group: number[]) {
+  if (group.length < 3) {
+    return false
+  }
+  const diffs = group.slice(1).map((number, index) => number - group[index])
+  return diffs.every((diff) => diff === 1 || diff === 2) && diffs.includes(1) && diffs.includes(2)
+}
+
+function uniqueGroups(groups: number[][]) {
+  const seen = new Set<string>()
+  return groups.filter((group) => {
+    const key = group.join(',')
+    if (seen.has(key)) {
+      return false
+    }
+    seen.add(key)
+    return true
+  })
+}
+
+function buildIntervals(events: SandboxEventMatch[], rows: LotteryResult[]): SandboxIntervalRow[] {
+  const chronological = [...events].reverse()
+  return chronological.map((event, index) => {
+    const next = chronological[index + 1]
+    const currentIndex = rows.findIndex((draw) => draw.issue === event.issue)
+    const nextIndex = next ? rows.findIndex((draw) => draw.issue === next.issue) : -1
+    const distance = nextIndex >= 0 && currentIndex >= 0 ? Math.abs(currentIndex - nextIndex) : null
+
+    return {
+      issue: event.issue,
+      draw_date: event.openedAt ?? event.draw_date,
+      next_issue: next?.issue ?? null,
+      gap: typeof distance === 'number' ? Math.max(0, distance - 1) : null,
+      distance,
+    }
+  })
+}
+
+function buildSummary(
+  rows: LotteryResult[],
+  events: SandboxEventMatch[],
+  intervals: SandboxIntervalRow[],
+  currentFilters: SandboxFilters,
+): SandboxSummary {
+  const gaps = intervals.map((row) => row.gap).filter((value): value is number => typeof value === 'number')
+  const latestEvent = events[0]
+  const currentMissing = latestEvent ? rows.findIndex((draw) => draw.issue === latestEvent.issue) : rows.length
+  const topZones = Array.from(
+    events
+      .flatMap((event) => event.zones ?? event.groups.flat().map(zoneOfNumber))
+      .reduce<Map<number, number>>((map, zone) => map.set(zone, (map.get(zone) ?? 0) + 1), new Map()),
+  )
+    .map(([zone, count]) => ({ zone, count }))
+    .sort((left, right) => right.count - left.count || left.zone - right.zone)
+
   return {
-    name,
-    type: 'line' as const,
-    smooth: true,
-    symbolSize: 4,
-    lineStyle: { color, width: 2 },
-    itemStyle: { color },
-    data,
+    sample_periods: rows.length,
+    event_level: currentFilters.level,
+    hit_periods: events.length,
+    hit_rate: rows.length > 0 ? events.length / rows.length : 0,
+    total_groups: events.reduce((sum, event) => sum + (event.group_count ?? event.groups.length), 0),
+    avg_gap: gaps.length > 0 ? gaps.reduce((sum, gap) => sum + gap, 0) / gaps.length : null,
+    median_gap: median(gaps),
+    max_gap: gaps.length > 0 ? Math.max(...gaps) : null,
+    current_missing: currentMissing >= 0 ? currentMissing : null,
+    latest_issue: latestEvent?.issue ?? null,
+    top_zones: topZones,
+    baseline_delta: null,
+    updated_at: new Date().toISOString(),
   }
 }
 
-function toggleNumber(number: number) {
-  if (selectedNumbers.value.includes(number)) {
-    selectedNumbers.value = selectedNumbers.value.filter((item) => item !== number)
-    return
+function median(values: number[]) {
+  if (values.length === 0) {
+    return null
   }
-
-  selectedNumbers.value = [...selectedNumbers.value, number].sort((left, right) => left - right)
+  const sorted = [...values].sort((left, right) => left - right)
+  const middle = Math.floor(sorted.length / 2)
+  return sorted.length % 2 === 0 ? (sorted[middle - 1] + sorted[middle]) / 2 : sorted[middle]
 }
 
-function selectHotNumbers() {
-  selectedNumbers.value = hotTop.value.slice(0, 5).map((row) => row.number)
-}
-
-function selectColdNumbers() {
-  selectedNumbers.value = coldTop.value.slice(0, 5).map((row) => row.number)
-}
-
-function toggleAlgorithm(name: string) {
-  if (selectedAlgorithmNames.value.includes(name)) {
-    selectedAlgorithmNames.value = selectedAlgorithmNames.value.filter((item) => item !== name)
-    return
-  }
-
-  selectedAlgorithmNames.value = [...selectedAlgorithmNames.value, name]
-}
-
-function resetFilters() {
-  dateStart.value = formatDateInput(defaultStartDate)
-  dateEnd.value = formatDateInput(latestDate)
-  selectedPeriod.value = 100
-  selectedStatisticType.value = 'overview'
-  selectedNumbers.value = []
-  selectedAlgorithmNames.value = enabledAlgorithms.value.slice(0, 3).map((algorithm) => algorithm.name)
-  dashboardDensity.value = 'comfortable'
-  errorMessage.value = ''
-}
-
-function refreshData() {
-  errorMessage.value = ''
-  isLoading.value = true
-  if (loadingTimer) {
-    window.clearTimeout(loadingTimer)
-  }
-  loadingTimer = window.setTimeout(() => {
-    isLoading.value = false
-  }, 320)
+function eventLabel(eventType: SandboxEventType, level: SandboxConsecutiveLevel) {
+  if (eventType === 'gap') return '隔号'
+  if (eventType === 'mixed') return '连号隔号'
+  if (eventType === 'interval') return `${level}连间隔`
+  return `${level}连号`
 }
 </script>
 
 <template>
-  <section class="data-dashboard" aria-labelledby="data-dashboard-title">
-    <div class="data-dashboard__intro">
-      <span class="section-kicker">历史分析</span>
-      <h2 id="data-dashboard-title">历史数据看板</h2>
-      <p>{{ analysisHint }}</p>
-    </div>
+  <section class="data-sandbox" aria-labelledby="data-sandbox-title">
+    <header class="sandbox-topbar">
+      <div>
+        <span class="section-kicker">历史分析</span>
+        <h2 id="data-sandbox-title">数据沙盘</h2>
+        <p>{{ currentRuleLabel }}，最近 {{ filters.period }} 期，实际统计 {{ actualPeriods }} 期。</p>
+      </div>
+      <div class="sandbox-topbar__status" aria-label="联网查询与刷新状态">
+        <span><Globe2 :size="15" aria-hidden="true" />{{ dataSource }}</span>
+        <span>最新期号 {{ lotteryStore.latestResult.issue }}</span>
+        <span>同步 {{ formatDateTime(lastSyncedAt) }}</span>
+      </div>
+    </header>
 
-    <section class="data-dashboard__filters" aria-label="历史数据筛选">
-      <div class="filter-group filter-group--dates">
-        <span class="filter-group__label">
-          <Filter :size="15" aria-hidden="true" />
-          日期范围
-        </span>
-        <label>
-          <span>开始</span>
-          <input v-model="dateStart" type="date" />
-        </label>
-        <label>
-          <span>结束</span>
-          <input v-model="dateEnd" type="date" />
-        </label>
+    <section class="sandbox-filters" aria-label="数据沙盘筛选">
+      <div class="filter-field filter-field--issue">
+        <label for="sandbox-issue"><Search :size="15" aria-hidden="true" />期号查询</label>
+        <input id="sandbox-issue" v-model.trim="filters.issue" placeholder="输入完整或部分期号" type="search" />
       </div>
 
-      <div class="filter-group">
-        <span class="filter-group__label">分析期数</span>
+      <div class="filter-field filter-field--dates">
+        <label><Filter :size="15" aria-hidden="true" />日期范围</label>
+        <input v-model="filters.startDate" type="date" aria-label="开始日期" />
+        <input v-model="filters.endDate" type="date" aria-label="结束日期" />
+      </div>
+
+      <div class="filter-field">
+        <label>分析期数</label>
         <div class="segmented-control" role="group" aria-label="分析期数">
           <button
             v-for="period in periodOptions"
             :key="period"
             type="button"
-            :aria-pressed="selectedPeriod === period"
-            @click="selectedPeriod = period"
+            :aria-pressed="filters.period === period"
+            @click="filters.period = period"
           >
             {{ period }}
           </button>
         </div>
       </div>
 
-      <div class="filter-group">
-        <span class="filter-group__label">统计类型</span>
-        <div class="segmented-control" role="group" aria-label="统计类型">
+      <div class="filter-field">
+        <label>事件类型</label>
+        <div class="segmented-control" role="group" aria-label="事件类型">
           <button
-            v-for="item in statisticTypes"
+            v-for="item in eventTypes"
             :key="item.key"
             type="button"
-            :aria-pressed="selectedStatisticType === item.key"
-            @click="selectedStatisticType = item.key"
+            :aria-pressed="filters.eventType === item.key"
+            @click="filters.eventType = item.key"
           >
             {{ item.label }}
           </button>
         </div>
       </div>
 
-      <div class="filter-group">
-        <span class="filter-group__label">密度</span>
+      <div class="filter-field">
+        <label>连号等级</label>
+        <div class="segmented-control" role="group" aria-label="连号等级">
+          <button
+            v-for="level in levels"
+            :key="level.key"
+            type="button"
+            :aria-pressed="filters.level === level.key"
+            @click="filters.level = level.key"
+          >
+            {{ level.label }}
+          </button>
+        </div>
+      </div>
+
+      <div class="filter-field">
+        <label>分析口径</label>
+        <div class="segmented-control" role="group" aria-label="分析口径">
+          <button type="button" :aria-pressed="filters.scope === 'global'" @click="filters.scope = 'global'">全局</button>
+          <button type="button" :aria-pressed="filters.scope === 'zone'" @click="filters.scope = 'zone'">八区</button>
+        </div>
+      </div>
+
+      <div class="filter-field filter-field--zones">
+        <label>八区选择</label>
+        <div class="zone-picker" aria-label="八区选择">
+          <button
+            v-for="zone in zoneOptions"
+            :key="zone.key"
+            type="button"
+            :aria-pressed="filters.zones.includes(zone.key)"
+            :disabled="filters.scope === 'global'"
+            @click="toggleZone(zone.key)"
+          >
+            <strong>{{ zone.label }}</strong>
+            <span>{{ zone.range }}</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="filter-field">
+        <label>每页条数</label>
+        <select v-model.number="filters.pageSize">
+          <option v-for="size in pageSizeOptions" :key="size" :value="size">{{ size }}</option>
+        </select>
+      </div>
+
+      <div class="filter-field">
+        <label>密度</label>
         <div class="segmented-control" role="group" aria-label="展示密度">
-          <button type="button" :aria-pressed="dashboardDensity === 'comfortable'" @click="dashboardDensity = 'comfortable'">
+          <button type="button" :aria-pressed="dashboardDensity === 'comfortable'" @click="setDashboardDensity('comfortable')">
             舒适
           </button>
-          <button type="button" :aria-pressed="dashboardDensity === 'compact'" @click="dashboardDensity = 'compact'">
+          <button type="button" :aria-pressed="dashboardDensity === 'compact'" @click="setDashboardDensity('compact')">
             紧凑
           </button>
         </div>
       </div>
 
-      <div class="filter-group filter-group--numbers">
-        <div class="filter-group__row">
-          <span class="filter-group__label">号码选择</span>
-          <div class="filter-actions">
-            <button type="button" @click="selectHotNumbers">热号</button>
-            <button type="button" @click="selectColdNumbers">冷号</button>
-            <button type="button" :disabled="selectedNumbers.length === 0" @click="selectedNumbers = []">清空</button>
-          </div>
-        </div>
-        <div class="number-picker" aria-label="选择关注号码">
-          <button
-            v-for="number in allNumbers"
-            :key="number"
-            type="button"
-            :aria-pressed="selectedNumbers.includes(number)"
-            @click="toggleNumber(number)"
-          >
-            {{ padNumber(number) }}
-          </button>
-        </div>
-      </div>
-
-      <div class="filter-group filter-group--algorithms">
-        <span class="filter-group__label">算法</span>
-        <div class="algorithm-picker" aria-label="复盘算法筛选">
-          <button
-            v-for="algorithm in enabledAlgorithms"
-            :key="algorithm.name"
-            type="button"
-            :aria-pressed="selectedAlgorithmNames.includes(algorithm.name)"
-            @click="toggleAlgorithm(algorithm.name)"
-          >
-            {{ algorithm.displayName }}
-          </button>
-        </div>
-      </div>
-
-      <div class="filter-group filter-group--commands">
-        <button class="command-button command-button--primary" type="button" :disabled="isLoading" @click="refreshData">
-          <RefreshCcw :size="16" aria-hidden="true" />
-          {{ isLoading ? '同步中' : '刷新' }}
+      <div class="filter-field filter-field--commands">
+        <button class="command-button command-button--primary" type="button" :disabled="isRefreshing || isLoading" @click="refreshData">
+          <RefreshCcw :size="16" aria-hidden="true" :class="{ 'is-spinning': isRefreshing }" />
+          {{ isRefreshing ? '刷新中' : '联网刷新' }}
         </button>
         <button class="command-button" type="button" @click="resetFilters">
           <RotateCcw :size="16" aria-hidden="true" />
@@ -920,101 +948,74 @@ function refreshData() {
       </div>
     </section>
 
-    <div v-if="errorMessage" class="dashboard-alert dashboard-alert--error">
-      <span>数据获取失败，请稍后重试。</span>
-      <button type="button" @click="refreshData">重试</button>
-    </div>
-    <div v-else-if="!isLoading && filteredHistory.length === 0" class="dashboard-alert">
-      <span>当前筛选范围暂无开奖记录。</span>
-      <button type="button" @click="resetFilters">重置筛选</button>
+    <div v-if="errorMessage" class="sandbox-alert">
+      <span>{{ errorMessage }}</span>
+      <button type="button" @click="loadSandboxData">重试接口</button>
     </div>
 
-    <section class="metric-grid" aria-label="历史数据指标">
-      <article v-for="metric in dashboardMetrics" :key="metric.key" class="metric-card">
-        <div class="metric-card__header">
-          <component :is="metric.icon" :size="18" aria-hidden="true" />
+    <section class="metric-strip" aria-label="沙盘指标">
+      <article v-for="metric in metricItems" :key="metric.key" class="metric-item">
+        <div>
+          <component :is="metric.icon" :size="16" aria-hidden="true" />
           <span>{{ metric.label }}</span>
         </div>
-        <div v-if="metric.rows" class="metric-card__balls">
-          <NumberBall
-            v-for="row in metric.rows"
-            :key="row.number"
-            :value="row.number"
-            :variant="metric.key === 'cold' ? 'muted' : metric.key === 'missing' ? 'selected' : 'outline'"
-            size="small"
-          />
-        </div>
-        <strong v-else>{{ metric.value }}</strong>
+        <strong>{{ metric.value }}</strong>
         <p>{{ metric.detail }}</p>
       </article>
     </section>
 
-    <section class="charts-grid" aria-label="历史数据图表">
+    <section class="analysis-grid" aria-label="数据沙盘分析图表">
       <ChartPanel
-        title="号码热力图"
-        subtitle="1-80 号码出现频率"
-        :summary="heatmapSummary"
-        :option="heatmapOption"
+        title="八区命中分布"
+        subtitle="按命中事件聚合到 1-8 区"
+        :summary="eightZoneRows.map((row) => `${row.label} ${row.count}`).join('，')"
+        :option="zoneHeatmapOption"
         :loading="isLoading"
-        :empty="filteredHistory.length === 0"
-        :error="errorMessage"
+        :empty="sandboxEvents.length === 0"
+        :error="''"
       />
       <ChartPanel
-        title="和值趋势"
-        subtitle="按期号从旧到新展示"
-        :summary="sumTrendSummary"
-        :option="sumTrendOption"
+        title="事件时间线"
+        subtitle="按期号从旧到新展示命中组数"
+        :summary="`当前窗口命中 ${sandboxEvents.length} 期，共 ${sandboxSummary.total_groups} 组。`"
+        :option="eventTimelineOption"
         :loading="isLoading"
-        :empty="filteredHistory.length === 0"
-        :error="errorMessage"
+        :empty="analysisSourceHistory.length === 0"
+        :error="''"
       />
       <ChartPanel
-        title="奇偶大小趋势"
-        subtitle="奇数、偶数、大号、小号对比"
-        :summary="structureTrendSummary"
-        :option="structureTrendOption"
+        title="间隔柱状图"
+        subtitle="相邻同类事件之间的空窗期数"
+        :summary="`平均空窗 ${formatNumberOrText(sandboxSummary.avg_gap, '样本不足')}，最长空窗 ${formatNumberOrText(sandboxSummary.max_gap, '样本不足')}。`"
+        :option="intervalOption"
         :loading="isLoading"
-        :empty="filteredHistory.length === 0"
-        :error="errorMessage"
+        :empty="sandboxIntervals.length === 0"
+        :error="''"
       />
-      <ChartPanel
-        title="区间分布"
-        subtitle="四区间累计出现次数"
-        :summary="zoneSummary"
-        :option="zoneDistributionOption"
-        :loading="isLoading"
-        :empty="filteredHistory.length === 0"
-        :error="errorMessage"
-      />
-      <ChartPanel
-        class="charts-grid__wide"
-        title="遗漏摘要"
-        subtitle="当前遗漏与历史最大遗漏对比"
-        :summary="missingSummary"
-        :option="missingOption"
-        :loading="isLoading"
-        :empty="filteredHistory.length === 0"
-        :error="errorMessage"
-      />
+      <aside class="summary-panel" aria-label="规律总结">
+        <div>
+          <span class="section-kicker">规律总结</span>
+          <h3>{{ currentRuleLabel }}</h3>
+        </div>
+        <p>{{ summaryText }}</p>
+        <div class="summary-panel__evidence">
+          <button type="button" @click="setTableMode('events')">查看命中表</button>
+          <button type="button" @click="setTableMode('intervals')">查看间隔表</button>
+        </div>
+      </aside>
     </section>
 
-    <section class="table-section" aria-label="历史数据表格">
+    <section class="table-section" aria-label="沙盘结果表">
       <header class="table-section__header">
         <div>
-          <span class="section-kicker">表格分析</span>
-          <h3>开奖、统计与复盘</h3>
-          <p>表格与上方筛选条件保持一致，移动端可横向滚动查看完整字段。</p>
+          <span class="section-kicker">结果表</span>
+          <h3>历史开奖、规则命中与间隔分析</h3>
+          <p>筛选变化后自动回到第一页，表格支持横向滚动。</p>
         </div>
         <div class="segmented-control" role="group" aria-label="表格类型">
-          <button
-            v-for="mode in tableModes"
-            :key="mode.key"
-            type="button"
-            :aria-pressed="activeTableMode === mode.key"
-            @click="activeTableMode = mode.key"
-          >
-            {{ mode.label }}
-          </button>
+          <button type="button" :aria-pressed="activeTableMode === 'history'" @click="setTableMode('history')">历史开奖</button>
+          <button type="button" :aria-pressed="activeTableMode === 'events'" @click="setTableMode('events')">规则命中</button>
+          <button type="button" :aria-pressed="activeTableMode === 'intervals'" @click="setTableMode('intervals')">间隔分析</button>
         </div>
       </header>
 
@@ -1024,29 +1025,45 @@ function refreshData() {
         :density="dashboardDensity"
         :loading="isLoading"
       />
-      <NumberStatsTable
-        v-else-if="activeTableMode === 'numbers'"
-        :rows="numberStats"
+      <SandboxEventTable
+        v-else-if="activeTableMode === 'events'"
+        :rows="eventRows"
         :density="dashboardDensity"
         :loading="isLoading"
       />
-      <ReplayTable v-else :rows="replayRows" :density="dashboardDensity" :loading="isLoading" />
+      <SandboxIntervalTable
+        v-else
+        :rows="intervalRows"
+        :density="dashboardDensity"
+        :loading="isLoading"
+      />
+
+      <footer class="pagination-bar" aria-label="分页">
+        <span>第 {{ filters.page }} / {{ totalPages }} 页，共 {{ totalRows }} 条</span>
+        <div>
+          <button type="button" :disabled="filters.page <= 1" @click="gotoPage(filters.page - 1)">上一页</button>
+          <button type="button" :disabled="filters.page >= totalPages" @click="gotoPage(filters.page + 1)">下一页</button>
+        </div>
+      </footer>
     </section>
   </section>
 </template>
 
 <style scoped>
-.data-dashboard {
+.data-sandbox {
   display: grid;
-  gap: 20px;
-  animation: data-dashboard-enter 260ms ease both;
+  gap: 18px;
+  animation: sandbox-enter 260ms ease both;
 }
 
-.data-dashboard__intro {
-  max-width: 840px;
+.sandbox-topbar {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 16px;
 }
 
-.data-dashboard__intro h2 {
+.sandbox-topbar h2 {
   margin: 4px 0 0;
   font-family: var(--h8-font-title);
   font-size: 30px;
@@ -1054,18 +1071,36 @@ function refreshData() {
   line-height: 1.2;
 }
 
-.data-dashboard__intro p {
-  margin: 8px 0 0;
+.sandbox-topbar p {
+  margin: 7px 0 0;
   color: var(--h8-color-text-muted);
   line-height: 1.6;
 }
 
-.data-dashboard__filters {
-  position: sticky;
-  top: calc(var(--h8-topbar-height) + 10px);
-  z-index: 8;
+.sandbox-topbar__status {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: end;
+  gap: 8px;
+}
+
+.sandbox-topbar__status span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--h8-color-line);
+  border-radius: var(--h8-radius-control);
+  background: var(--h8-color-surface-strong);
+  color: var(--h8-color-text-muted);
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+.sandbox-filters {
+  position: relative;
+  z-index: 1;
   display: grid;
-  grid-template-columns: minmax(280px, 1.5fr) repeat(3, minmax(180px, 0.8fr)) auto;
+  grid-template-columns: minmax(220px, 1.2fr) minmax(260px, 1.4fr) repeat(4, minmax(150px, 0.8fr));
   gap: 12px;
   border: 1px solid var(--h8-color-line);
   border-radius: var(--h8-radius-panel);
@@ -1075,54 +1110,42 @@ function refreshData() {
   backdrop-filter: blur(18px);
 }
 
-.filter-group {
+.filter-field {
   display: grid;
   align-content: start;
-  gap: 8px;
+  gap: 7px;
   min-width: 0;
 }
 
-.filter-group--numbers,
-.filter-group--algorithms {
-  grid-column: span 2;
-}
-
-.filter-group--commands {
-  align-content: end;
-  justify-content: end;
-  grid-column: span 1;
-  grid-template-columns: repeat(2, auto);
-}
-
-.filter-group--dates {
+.filter-field--dates {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
-.filter-group__label {
-  display: inline-flex;
+.filter-field--dates label,
+.filter-field--zones {
   grid-column: 1 / -1;
+}
+
+.filter-field--zones {
+  grid-column: span 3;
+}
+
+.filter-field--commands {
+  align-content: end;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.filter-field label {
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   color: var(--h8-color-text-muted);
   font-size: 12px;
   font-weight: 700;
 }
 
-.filter-group__row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.filter-group label {
-  display: grid;
-  gap: 4px;
-  color: var(--h8-color-text-muted);
-  font-size: 12px;
-}
-
-.filter-group input {
+.filter-field input,
+.filter-field select {
   min-height: 34px;
   min-width: 0;
   border: 1px solid var(--h8-color-line);
@@ -1132,31 +1155,19 @@ function refreshData() {
   padding: 0 9px;
 }
 
-.filter-group input:focus-visible,
-.segmented-control button:focus-visible,
-.filter-actions button:focus-visible,
-.algorithm-picker button:focus-visible,
-.number-picker button:focus-visible,
-.command-button:focus-visible,
-.dashboard-alert button:focus-visible {
-  outline: 0;
-  box-shadow: var(--h8-focus-ring);
-}
-
 .segmented-control,
-.filter-actions,
-.algorithm-picker {
+.zone-picker {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
 }
 
 .segmented-control button,
-.filter-actions button,
-.algorithm-picker button,
-.number-picker button,
+.zone-picker button,
 .command-button,
-.dashboard-alert button {
+.sandbox-alert button,
+.summary-panel__evidence button,
+.pagination-bar button {
   min-height: 32px;
   border: 1px solid var(--h8-color-line);
   border-radius: var(--h8-radius-control);
@@ -1167,46 +1178,35 @@ function refreshData() {
   line-height: 1.2;
 }
 
-.segmented-control button,
-.filter-actions button,
-.algorithm-picker button {
+.segmented-control button {
   padding: 0 10px;
 }
 
 .segmented-control button[aria-pressed='true'],
-.algorithm-picker button[aria-pressed='true'],
-.number-picker button[aria-pressed='true'] {
+.zone-picker button[aria-pressed='true'] {
   border-color: var(--h8-color-cinnabar);
   background: color-mix(in srgb, var(--h8-color-cinnabar) 10%, var(--h8-color-surface-strong));
   color: var(--h8-color-cinnabar);
   font-weight: 700;
 }
 
-.filter-actions button:disabled,
-.command-button:disabled {
-  cursor: not-allowed;
-  opacity: 0.48;
-}
-
-.number-picker {
+.zone-picker button {
   display: grid;
-  grid-template-columns: repeat(20, 32px);
-  gap: 5px;
-  overflow-x: auto;
-  padding-bottom: 2px;
+  gap: 2px;
+  min-width: 66px;
+  padding: 5px 8px;
+  text-align: left;
 }
 
-.number-picker button {
-  width: 32px;
-  min-height: 28px;
-  padding: 0;
+.zone-picker button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.zone-picker span {
+  color: var(--h8-color-text-muted);
   font-family: var(--h8-font-number);
-  font-size: 12px;
-}
-
-.algorithm-picker {
-  max-height: 74px;
-  overflow: auto;
+  font-size: 11px;
 }
 
 .command-button {
@@ -1223,87 +1223,119 @@ function refreshData() {
   color: #fff;
 }
 
-.dashboard-alert {
+.command-button:disabled,
+.pagination-bar button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.filter-field input:focus-visible,
+.filter-field select:focus-visible,
+.segmented-control button:focus-visible,
+.zone-picker button:focus-visible,
+.command-button:focus-visible,
+.sandbox-alert button:focus-visible,
+.summary-panel__evidence button:focus-visible,
+.pagination-bar button:focus-visible {
+  outline: 0;
+  box-shadow: var(--h8-focus-ring);
+}
+
+.sandbox-alert {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  border: 1px solid var(--h8-color-line);
+  border: 1px solid color-mix(in srgb, var(--h8-color-risk-orange) 55%, var(--h8-color-line));
   border-radius: var(--h8-radius-panel);
   background: color-mix(in srgb, var(--h8-color-risk-orange) 10%, var(--h8-color-surface-strong));
   color: var(--h8-color-text);
   padding: 12px 14px;
 }
 
-.dashboard-alert--error {
-  background: color-mix(in srgb, var(--h8-color-cinnabar) 10%, var(--h8-color-surface-strong));
-}
-
-.dashboard-alert button {
+.sandbox-alert button,
+.summary-panel__evidence button,
+.pagination-bar button {
   padding: 0 10px;
 }
 
-.metric-grid {
+.metric-strip {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 12px;
+  gap: 10px;
 }
 
-.metric-card {
+.metric-item {
   display: grid;
-  gap: 10px;
-  min-height: 128px;
+  gap: 8px;
+  min-height: 118px;
   border: 1px solid var(--h8-color-line);
   border-radius: var(--h8-radius-panel);
   background: var(--h8-color-surface-strong);
   box-shadow: 0 12px 36px var(--h8-color-shadow);
-  padding: 14px;
+  padding: 13px;
 }
 
-.metric-card__header {
+.metric-item div {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 6px;
   color: var(--h8-color-text-muted);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 700;
 }
 
-.metric-card__header svg {
+.metric-item svg {
   color: var(--h8-color-cinnabar);
 }
 
-.metric-card strong {
-  overflow-wrap: anywhere;
+.metric-item strong {
   color: var(--h8-color-cinnabar);
   font-family: var(--h8-font-number);
-  font-size: 27px;
-  letter-spacing: 0;
+  font-size: 24px;
   line-height: 1.1;
 }
 
-.metric-card p {
+.metric-item p {
   margin: 0;
   color: var(--h8-color-text-muted);
   font-size: 12px;
   line-height: 1.45;
 }
 
-.metric-card__balls {
+.analysis-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.summary-panel {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  border: 1px solid var(--h8-color-line);
+  border-radius: var(--h8-radius-panel);
+  background: var(--h8-color-surface-strong);
+  box-shadow: 0 12px 36px var(--h8-color-shadow);
+  padding: 16px;
+}
+
+.summary-panel h3 {
+  margin: 4px 0 0;
+  font-size: 18px;
+}
+
+.summary-panel p {
+  margin: 0;
+  color: var(--h8-color-text);
+  font-size: 13px;
+  line-height: 1.75;
+}
+
+.summary-panel__evidence {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  min-height: 32px;
-}
-
-.charts-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
-}
-
-.charts-grid__wide {
-  grid-column: 1 / -1;
+  gap: 8px;
 }
 
 .table-section {
@@ -1329,7 +1361,29 @@ function refreshData() {
   font-size: 13px;
 }
 
-@keyframes data-dashboard-enter {
+.pagination-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--h8-color-line);
+  border-radius: var(--h8-radius-panel);
+  background: var(--h8-color-surface-strong);
+  padding: 10px 12px;
+  color: var(--h8-color-text-muted);
+  font-size: 13px;
+}
+
+.pagination-bar div {
+  display: flex;
+  gap: 8px;
+}
+
+.is-spinning {
+  animation: spin-once 620ms ease both;
+}
+
+@keyframes sandbox-enter {
   from {
     opacity: 0;
     transform: translateY(8px);
@@ -1341,75 +1395,84 @@ function refreshData() {
   }
 }
 
-@media (max-width: 1280px) {
-  .data-dashboard__filters {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
-  .filter-group--numbers,
-  .filter-group--algorithms {
-    grid-column: span 3;
-  }
-
-  .metric-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+@keyframes spin-once {
+  to {
+    transform: rotate(360deg);
   }
 }
 
-@media (max-width: 920px) {
-  .data-dashboard__filters {
-    grid-template-columns: 1fr 1fr;
+@media (prefers-reduced-motion: reduce) {
+  .data-sandbox,
+  .is-spinning {
+    animation: none;
+  }
+}
+
+@media (max-width: 1320px) {
+  .sandbox-filters {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
-  .filter-group--numbers,
-  .filter-group--algorithms,
-  .filter-group--commands {
+  .filter-field--zones {
     grid-column: 1 / -1;
   }
 
-  .charts-grid {
-    grid-template-columns: 1fr;
+  .metric-strip {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
-  .metric-grid {
+  .analysis-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
-@media (max-width: 760px) {
-  .data-dashboard__intro h2 {
+@media (max-width: 920px) {
+  .sandbox-topbar,
+  .table-section__header {
+    display: grid;
+  }
+
+  .sandbox-topbar__status {
+    justify-content: start;
+  }
+
+  .sandbox-filters,
+  .analysis-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .filter-field--zones,
+  .filter-field--dates {
+    grid-column: 1 / -1;
+  }
+
+  .metric-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 680px) {
+  .sandbox-topbar h2 {
     font-size: 25px;
   }
 
-  .data-dashboard__filters {
-    top: 0;
-    grid-template-columns: 1fr;
+  .sandbox-filters {
     max-height: 78vh;
     overflow: auto;
   }
 
-  .filter-group--dates,
-  .filter-group--numbers,
-  .filter-group--algorithms,
-  .filter-group--commands {
-    grid-column: 1 / -1;
-  }
-
-  .filter-group--dates,
-  .filter-group--commands {
-    grid-template-columns: 1fr 1fr;
-  }
-
-  .number-picker {
-    grid-template-columns: repeat(10, 32px);
-  }
-
-  .metric-grid {
+  .filter-field--dates,
+  .filter-field--commands {
     grid-template-columns: 1fr;
   }
 
-  .table-section__header {
-    display: grid;
+  .metric-strip {
+    grid-template-columns: 1fr;
+  }
+
+  .pagination-bar {
+    align-items: stretch;
+    flex-direction: column;
   }
 }
 </style>
