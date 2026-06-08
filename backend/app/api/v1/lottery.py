@@ -9,6 +9,7 @@ from app.core.dependencies import get_db, get_current_active_user
 from app.core.exceptions import create_success_response
 from app.models.user import User
 from app.models.prediction import LotteryResult
+from app.services.lottery_sandbox_service import LotterySandboxService
 from app.services.lottery_service import LotteryService
 from app.services.lottery_sync_service import lottery_sync_service
 
@@ -77,7 +78,12 @@ async def get_historical_results(
             issue=issue,
         )
         serialized = [serialize_lottery_result(item) for item in results]
-        data = {"results": serialized, "total": len(serialized)}
+        total = await lottery_service.count_historical_results(
+            start_date=start_date,
+            end_date=end_date,
+            issue=issue,
+        )
+        data = {"results": serialized, "total": total}
         return create_success_response(data=data, message="获取历史开奖结果成功")
     except Exception as exc:
         logger.error("获取历史开奖结果失败: %s", exc)
@@ -220,4 +226,88 @@ async def auto_sync_latest_data():
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="自动同步开奖数据失败",
+        )
+
+
+@router.get("/sandbox/filter")
+async def filter_sandbox_results(
+    rules: Optional[List[str]] = Query(None),
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+    issue: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """数据沙盘规则过滤。"""
+    try:
+        service = LotterySandboxService(db)
+        data = await service.filter_results(
+            rules=rules,
+            limit=limit,
+            offset=offset,
+            start_date=start_date,
+            end_date=end_date,
+            issue=issue,
+        )
+        return create_success_response(data=data, message="数据沙盘过滤成功")
+    except Exception as exc:
+        logger.error("数据沙盘过滤失败: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="数据沙盘过滤失败",
+        )
+
+
+@router.get("/sandbox/intervals")
+async def analyze_sandbox_intervals(
+    rules: Optional[List[str]] = Query(None),
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+    issue: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """数据沙盘间隔分析。"""
+    try:
+        service = LotterySandboxService(db)
+        data = await service.analyze_intervals(
+            rules=rules,
+            start_date=start_date,
+            end_date=end_date,
+            issue=issue,
+        )
+        return create_success_response(data=data, message="数据沙盘间隔分析成功")
+    except Exception as exc:
+        logger.error("数据沙盘间隔分析失败: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="数据沙盘间隔分析失败",
+        )
+
+
+@router.get("/sandbox/summary")
+async def summarize_sandbox_patterns(
+    rules: Optional[List[str]] = Query(None),
+    periods: int = Query(100, ge=1, le=1000),
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+    issue: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """数据沙盘规律总结。"""
+    try:
+        service = LotterySandboxService(db)
+        data = await service.summarize_patterns(
+            rules=rules,
+            periods=periods,
+            start_date=start_date,
+            end_date=end_date,
+            issue=issue,
+        )
+        return create_success_response(data=data, message="数据沙盘规律总结成功")
+    except Exception as exc:
+        logger.error("数据沙盘规律总结失败: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="数据沙盘规律总结失败",
         )
